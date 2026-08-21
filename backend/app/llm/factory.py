@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.config import Settings
 from app.config import settings as default_settings
 from app.llm.base import LLMProvider
+from app.llm.deterministic import DeterministicProvider
 from app.llm.ollama import OllamaProvider
 from app.llm.openai_compatible import OpenAICompatibleProvider
 
@@ -36,4 +37,7 @@ def build_llm_provider(settings: Settings | None = None) -> LLMProvider:
             model=cfg.ollama_model,
             timeout=cfg.llm_timeout_seconds,
         )
+    if cfg.llm_provider == "test":
+        # Deterministic CI provider: full orchestration without live inference.
+        return DeterministicProvider()
     raise ValueError(f"Unknown LLM_PROVIDER: {cfg.llm_provider!r}")

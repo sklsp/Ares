@@ -26,6 +26,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   // Restore the session on first load so refresh/navigation keeps you logged in.
+  // Hydrating persisted auth state is the effect's purpose; the rule's
+  // lazy-init alternative cannot read localStorage during SSR render.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -39,6 +42,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setLoading(false);
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const login = useCallback(async (email: string, password: string) => {
     setError(null);

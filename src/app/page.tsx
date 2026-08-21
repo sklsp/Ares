@@ -1,7 +1,9 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, ArrowUpRight, BarChart3, Check, ChevronRight, CircleDot, Clock3, Globe2, Package, RefreshCw, Search, Send, ShieldCheck, Sparkles, X, type LucideIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Activity, AlertTriangle, ArrowUpRight, BarChart3, Check, ChevronRight, CircleDot, Clock3, Globe2, LogOut, Package, RefreshCw, Search, Send, ShieldCheck, Sparkles, X, type LucideIcon } from "lucide-react";
+import { useAuth } from "./auth-context";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -12,15 +14,11 @@ type Run = { id: number; status: string; user_request: string; final_response?: 
 type Job = { id: number; objective: string; query: string; status: string; stage: string; stats: { domains_discovered?: number; pages_crawled?: number; products_discovered?: number; opportunities_found?: number }; error?: string };
 type Opportunity = { id: number; type: string; title: string; summary: string; recommended_action: string; source_urls: string[]; score: number; confidence: number; competition_level: string; evidence: { stores_observed?: number; products_observed?: number; median_price?: number | null }; status: string };
 
-async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API}${path}`, { ...options, headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) } });
-  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.detail ?? body.error ?? `Request failed (${response.status})`); }
-  return response.json();
-}
-
 const money = (value: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
 
 export default function Home() {
+  const { user, loading: authLoading, logout, apiFetch } = useAuth();
+  const router = useRouter();
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
@@ -38,11 +36,16 @@ export default function Home() {
   const load = useCallback(async () => {
     setError("");
     try {
-      const [summary, catalog, pending, jobList, opportunityList] = await Promise.all([api<Analytics>("/analytics/summary"), api<{ items: Product[] }>(`/products?limit=12${query ? `&search=${encodeURIComponent(query)}` : ""}`), api<Approval[]>("/approvals"), api<Job[]>("/intelligence/jobs"), api<Opportunity[]>("/intelligence/opportunities")]);
+      const [summary, catalog, pending, jobList, opportunityList] = await Promise.all([apiFetch<Analytics>("/analytics/summary"), apiFetch<{ items: Product[] }>(`/products?limit=12${query ? `&search=${encodeURIComponent(query)}` : ""}`), apiFetch<Approval[]>("/approvals"), apiFetch<Job[]>("/intelligence/jobs"), apiFetch<Opportunity[]>("/intelligence/opportunities")]);
       setAnalytics(summary); setProducts(catalog.items); setApprovals(pending); setJobs(jobList); setOpportunities(opportunityList);
     } catch (err) { setError(err instanceof Error ? err.message : "Could not reach the operations API"); }
     finally { setLoading(false); }
-  }, [query]);
+  }, [query, apiFetch]);
+
+  // Server-side authority: without a session the dashboard never renders data.
+  useEffect(() => {
+    if (!authLoading && !user) router.replace("/login");
+  }, [authLoading, user, router]);
 
   // Fetching external data on mount and when the search filter changes is the effect's purpose.
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -57,7 +60,7 @@ export default function Home() {
     event.preventDefault(); if (!request.trim()) return;
     setSending(true); setError(""); setRun(null);
     try {
-      const created = await api<Run>("/agent/run", { method: "POST", body: JSON.stringify({ message: request, session_id: "dashboard" }) });
+      const created = await apiFetch<Run>("/agent/run", { method: "POST", body: JSON.stringify({ message: request, session_id: "dashboard" }) });
       setRun(created); setRequest("");
       const source = new EventSource(`${API}/agent/runs/${created.id}/events`);
       source.addEventListener("step", (event) => { const step = JSON.parse((event as MessageEvent).data); setRun((current) => current ? { ...current, steps: [...current.steps, step] } : current); });
@@ -68,23 +71,27 @@ export default function Home() {
     finally { setSending(false); }
   };
 
-  const loadRun = async (id: number) => { try { setRun(await api<Run>(`/agent/runs/${id}`)); } catch (err) { setError(err instanceof Error ? err.message : "Could not load run"); } };
-  const decide = async (approval: Approval, approved: boolean) => { try { await api(`/approvals/${approval.id}/${approved ? "approve" : "reject"}`, { method: "POST", body: JSON.stringify({}) }); await load(); if (run) await loadRun(run.id); } catch (err) { setError(err instanceof Error ? err.message : "Could not resolve approval"); } };
+  const loadRun = async (id: number) => { try { setRun(await apiFetch<Run>(`/agent/runs/${id}`)); } catch (err) { setError(err instanceof Error ? err.message : "Could not load run"); } };
+  const decide = async (approval: Approval, approved: boolean) => { try { await apiFetch(`/approvals/${approval.id}/${approved ? "approve" : "reject"}`, { method: "POST", body: JSON.stringify({}) }); await load(); if (run) await loadRun(run.id); } catch (err) { setError(err instanceof Error ? err.message : "Could not resolve approval"); } };
   const startResearch = async (event: FormEvent) => {
     event.preventDefault(); if (!researchQuery.trim()) return;
     setResearching(true); setError("");
-    try { await api<Job>("/intelligence/jobs", { method: "POST", body: JSON.stringify({ objective: `Find opportunities in ${researchQuery}`, query: researchQuery }) }); setResearchQuery(""); await load(); }
+    try { await apiFetch<Job>("/intelligence/jobs", { method: "POST", body: JSON.stringify({ objective: `Find opportunities in ${researchQuery}`, query: researchQuery }) }); setResearchQuery(""); await load(); }
     catch (err) { setError(err instanceof Error ? err.message : "Could not start research"); }
     finally { setResearching(false); }
   };
 
   const healthLabel = useMemo(() => error ? "API attention needed" : loading ? "Connecting" : "Store connected", [error, loading]);
 
+  if (authLoading || !user) {
+    return <main className="login-shell"><div className="login-card"><p className="muted">Checking your session…</p></div></main>;
+  }
+
   return <main className="console-shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><Sparkles size={17} /></div><div><strong>Ops Agent</strong><span>commerce control room</span></div></div>
       <nav><a className="active"><Activity size={17} /> Overview</a><a href="#intelligence"><Globe2 size={17} /> Intelligence <b>{opportunities.length}</b></a><a href="#catalog"><Package size={17} /> Catalog</a><a href="#approvals"><ShieldCheck size={17} /> Approvals <b>{approvals.length}</b></a></nav>
-      <div className="sidebar-foot"><span className={`status-dot ${error ? "bad" : ""}`} /> {healthLabel}<small>Local operations workspace</small></div>
+      <div className="sidebar-foot"><span className={`status-dot ${error ? "bad" : ""}`} /> {healthLabel}<small>{user.email} · {user.role}</small><button className="logout-button" onClick={() => { logout(); router.replace("/login"); }} aria-label="Sign out"><LogOut size={13} /> Sign out</button></div>
     </aside>
     <section className="workspace">
       <header className="topbar"><div><p className="eyebrow">Tuesday, August 21, 2026</p><h1>Good morning, manager.</h1></div><button className="icon-button" onClick={() => { setLoading(true); void load(); }} aria-label="Refresh data" title="Refresh data"><RefreshCw size={17} /></button></header>

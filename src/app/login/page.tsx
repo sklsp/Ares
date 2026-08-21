@@ -3,7 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ShieldCheck, Sparkles } from "lucide-react";
-import { useAuth } from "./auth-context";
+import { useAuth } from "../auth-context";
 
 export default function LoginPage() {
   const { login, user, loading, error } = useAuth();

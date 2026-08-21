@@ -52,16 +52,12 @@ def _upsert_product(db: Session, store: ExternalStore, product, captured_at: dat
 def _upsert_store(db: Session, domain: str, niche: str, name: str,
                   organization_id: int | None = None) -> ExternalStore:
     """Find or create the tenant's record for a crawled domain."""
-    store = db.execute(
-        select(ExternalStore)
-        .where(ExternalStore.domain == domain)
-        .where(
-            (ExternalStore.organization_id == organization_id)
-            | (ExternalStore.organization_id.is_(None) & (organization_id.is_(None)))
-            if organization_id is None
-            else ExternalStore.organization_id == organization_id
-        )
-    ).scalars().first()
+    query = select(ExternalStore).where(ExternalStore.domain == domain)
+    if organization_id is not None:
+        query = query.where(ExternalStore.organization_id == organization_id)
+    else:
+        query = query.where(ExternalStore.organization_id.is_(None))
+    store = db.execute(query).scalars().first()
     if store is None:
         store = ExternalStore(domain=domain, name=name, niche=niche,
                               organization_id=organization_id)

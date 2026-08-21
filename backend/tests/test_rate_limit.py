@@ -14,6 +14,19 @@ def _clean_limits():
     reset_limits()
 
 
+@pytest.fixture
+def auth_headers(client):
+    """A registered, authenticated manager for rate-limited endpoints."""
+    client.post("/auth/register", json={
+        "email": "limiter@example.com", "password": "long enough password",
+        "role": "manager",
+    })
+    login = client.post("/auth/login", json={
+        "email": "limiter@example.com", "password": "long enough password",
+    })
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
 def test_agent_run_is_rate_limited(client, llm):
     from tests.fakes import answer
 
@@ -26,25 +39,25 @@ def test_agent_run_is_rate_limited(client, llm):
     assert 429 in statuses
 
 
-def test_research_job_is_rate_limited(client):
+def test_research_job_is_rate_limited(client, auth_headers):
     statuses = [
         client.post("/intelligence/jobs", json={
             "objective": f"Investigation {i}", "query": f"niche {i}",
-        }).status_code
+        }, headers=auth_headers).status_code
         for i in range(12)
     ]
     assert statuses.count(202) >= 1
     assert 429 in statuses
 
 
-def test_rate_limit_can_be_disabled(client, monkeypatch):
+def test_rate_limit_can_be_disabled(client, auth_headers, monkeypatch):
     from app.config import settings
 
     monkeypatch.setattr(settings, "rate_limit_disabled", True)
     statuses = [
         client.post("/intelligence/jobs", json={
             "objective": f"Open investigation {i}", "query": f"open {i}",
-        }).status_code
+        }, headers=auth_headers).status_code
         for i in range(12)
     ]
     assert 429 not in statuses

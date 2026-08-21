@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     rate_limit_agent_per_minute: int = 10
     rate_limit_research_per_minute: int = 10
     rate_limit_login_per_minute: int = 20
+    # When set, rate limits are shared across API replicas via Redis.
+    # Leave empty for single-process local development (in-process limiter).
+    redis_url: str | None = None
 
     @property
     def cors_origin_list(self) -> list[str]:

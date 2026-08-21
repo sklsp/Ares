@@ -15,6 +15,29 @@ from app.tools import get_registry
 router = APIRouter(tags=["system"])
 
 
+@router.get("/live", response_model=dict)
+def liveness() -> dict:
+    """Liveness: the process is running. No dependency checks — a hung
+    database must not cause the orchestrator to kill this pod."""
+    return {"status": "alive", "version": __version__}
+
+
+@router.get("/ready", response_model=dict)
+def readiness(db: DbSession) -> dict:
+    """Readiness: the process can actually serve requests. Fails (503) when
+    a required dependency is unavailable so traffic is routed elsewhere."""
+    try:
+        db.execute(text("SELECT 1"))
+        database_ok = True
+    except Exception:  # noqa: BLE001
+        database_ok = False
+    if not database_ok:
+        from fastapi import Response
+
+        return Response(status_code=503, content='{"status": "unready", "database": false}', media_type="application/json")
+    return {"status": "ready", "database": True, "version": __version__}
+
+
 @router.get("/health", response_model=HealthResponse)
 def health(db: DbSession, llm: LLM) -> HealthResponse:
     """Liveness plus dependency status. Always 200 - read the body for detail."""
@@ -33,7 +56,8 @@ def health(db: DbSession, llm: LLM) -> HealthResponse:
             "provider": status.provider,
             "model": status.model,
             "available": status.available,
-            "detail": status.detail,
+            # Explicit reason when unavailable: connection refused vs missing model.
+            "reason": None if status.available else status.detail,
         },
     )
 
