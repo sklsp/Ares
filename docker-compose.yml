@@ -1,0 +1,59 @@
+# Full demo stack: PostgreSQL + FastAPI + Next.js.
+#
+#   docker compose up --build
+#
+# Ollama is deliberately NOT a service here - GPU passthrough differs too much
+# between machines. Run it on the host (`ollama serve`) and the backend reaches
+# it through host.docker.internal. Everything except answering agent prompts
+# (catalog, analytics, approvals UI, research reads) works without it.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ecommerce
+      POSTGRES_PASSWORD: ecommerce
+      POSTGRES_DB: ecommerce_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecommerce -d ecommerce_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://ecommerce:ecommerce@postgres:5432/ecommerce_agent
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      CORS_ORIGINS: http://localhost:3000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      # Lets the container reach an Ollama running on the host.
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: .
+      args:
+        # Baked into the bundle at build time; this is the URL the browser uses.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

@@ -81,7 +81,10 @@ def run_investigation(db: Session, job: ResearchJob, *, start_urls: list[str] | 
         results = crawler.crawl(urls)
         products: list[ExternalProduct] = []
         for result in results:
-            job.stats["pages_crawled"] = job.stats.get("pages_crawled", 0) + 1
+            job.stats = {
+                **job.stats,
+                "pages_crawled": job.stats.get("pages_crawled", 0) + 1,
+            }
             if result.error or not result.products:
                 continue
             domain = urlparse(result.url).netloc.lower()
@@ -114,7 +117,12 @@ def run_investigation(db: Session, job: ResearchJob, *, start_urls: list[str] | 
             evidence = {"stores_observed": len(domains), "products_observed": len(matches), "median_price": median_price, "observed": True, "inferred": "repeated public listings indicate market presence"}
             _opportunity(db, job, kind, title, summary, "Review the evidence and compare this cluster with the catalog before considering an approved addition.", score, min(0.95, 0.45 + repetition * 0.4), [p.source_url for p in matches], evidence, "moderate" if len(domains) < 5 else "high", {"repetition": len(matches), "domains": domains})
             found += 1
-        job.stats["products_discovered"] = len(products); job.stats["opportunities_found"] = found; job.status = "COMPLETED"; job.stage = "complete"; job.completed_at = utcnow(); job.result = {"opportunities_found": found}; db.commit()
+        job.stats = {
+            **job.stats,
+            "products_discovered": len(products),
+            "opportunities_found": found,
+        }
+        job.status = "COMPLETED"; job.stage = "complete"; job.completed_at = utcnow(); job.result = {"opportunities_found": found}; db.commit()
         return {"pages": len(results), "products": len(products), "opportunities": found}
     except Exception as exc:
         job.status = "FAILED"; job.stage = "failed"; job.error = str(exc); job.completed_at = utcnow(); db.commit(); raise

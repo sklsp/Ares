@@ -51,7 +51,7 @@ class ResponsibleCrawler:
         clean, _ = urldefrag(url.strip())
         parsed = urlparse(clean)
         scheme = parsed.scheme.lower() or "https"
-        host = parsed.netloc.lower().split(":", 1)[0]
+        host = parsed.netloc.lower()
         path = parsed.path.rstrip("/") or "/"
         return f"{scheme}://{host}{path}" + (f"?{parsed.query}" if parsed.query else "")
 
