@@ -7,12 +7,13 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import __version__
 from app.agent import runner
 from app.api import agent, analytics, approvals, health, intelligence, products
+from app.api import auth as auth_api
 from app.config import settings
 from app.integrations.base import ProductNotFoundError, ProviderError
 from app.logging_config import configure_logging, get_logger
@@ -73,6 +74,17 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Metrics + correlation IDs on every request.
+    from app.observability import instrument_requests
+
+    app.add_middleware(instrument_requests)
+
+    @app.get("/metrics", include_in_schema=False)
+    def prometheus_metrics() -> "Response":
+        from app.observability.metrics import render
+
+        return Response(content=render(), media_type="text/plain; version=0.0.4")
+
     # Global auth gate: enforced only when API_KEY is configured.
     from app.api.deps import require_api_key
 
@@ -80,6 +92,7 @@ def create_app() -> FastAPI:
 
     for router in (
         health.router,
+        auth_api.router,
         agent.router,
         approvals.router,
         products.router,

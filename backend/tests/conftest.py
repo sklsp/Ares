@@ -28,9 +28,16 @@ from sqlalchemy import delete  # noqa: E402
 from app.db.base import Base, SessionLocal, engine  # noqa: E402
 from app.db.models import (  # noqa: E402
     AgentRun,
+    ApprovalRequest,
+    ExternalProduct,
+    ExternalStore,
     Inventory,
+    Opportunity,
+    OpportunityEvidence,
     Order,
     Product,
+    ProductSnapshot,
+    ResearchJob,
     utcnow,
 )
 from app.integrations.mock_provider import MockEcommerceProvider  # noqa: E402
@@ -102,7 +109,9 @@ def _schema():
 def db():
     """A clean, freshly seeded database for every test."""
     session = SessionLocal()
-    for model in (Order, Inventory, Product, AgentRun):
+    for model in (OpportunityEvidence, Opportunity, ResearchJob, ProductSnapshot,
+                  ExternalProduct, ExternalStore, ApprovalRequest, Order, Inventory,
+                  Product, AgentRun):
         session.execute(delete(model))
     session.commit()
 

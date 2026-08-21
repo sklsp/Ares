@@ -80,18 +80,24 @@ def _execute(job_id: int) -> None:
             return
         try:
             from app.intelligence.crawler import CrawlPolicy, ResponsibleCrawler
+            from app.observability.metrics import Timer, inc
 
             crawler = ResponsibleCrawler(CrawlPolicy(
                 max_pages=20, max_depth=1, delay_seconds=0.5,
                 allow_private_addresses=settings.crawler_allow_private_addresses,
             ))
             try:
-                run_investigation(db, claimed, crawler=crawler)
+                with Timer("research_job_duration_seconds"):
+                    run_investigation(db, claimed, crawler=crawler)
             finally:
                 crawler.close()
             transition(db, claimed, JobStatus.COMPLETED)
+            inc("research_jobs_total", outcome="completed")
         except Exception as exc:  # noqa: BLE001 - record and requeue per policy
+            from app.observability.metrics import inc
+
             logger.exception("Embedded worker failed job %s", job_id)
+            inc("research_jobs_total", outcome="failed")
             db.rollback()
             fresh = db.get(ResearchJob, job_id)
             if fresh is not None:

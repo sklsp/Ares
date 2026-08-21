@@ -69,19 +69,29 @@ def test_cancelled_job_cannot_run_again(db):
 
 # --- concurrent claiming ------------------------------------------------
 def test_two_workers_never_claim_the_same_job(db):
-    jobs = [_make(db) for _ in range(4)]
+    jobs = [
+        _make(db, query=f"niche-{index}") for index in range(4)
+    ]
     claimed_by: dict[int, str] = {}
     collisions: list[str] = []
+    lock = threading.Lock()
 
     def work(worker_id: str) -> None:
-        own_db = db  # tests share the session; SQLite serializes writes
-        while True:
-            job = claim_next(own_db, worker_id)
-            if job is None:
-                return
-            if job.id in claimed_by:
-                collisions.append(job.id)
-            claimed_by[job.id] = worker_id
+        # Each worker uses its own session, as in production.
+        from app.db.base import SessionLocal
+
+        session = SessionLocal()
+        try:
+            while True:
+                job = claim_next(session, worker_id)
+                if job is None:
+                    return
+                with lock:
+                    if job.id in claimed_by:
+                        collisions.append(job.id)
+                    claimed_by[job.id] = worker_id
+        finally:
+            session.close()
 
     threads = [threading.Thread(target=work, args=(f"w{i}",)) for i in range(2)]
     for thread in threads:

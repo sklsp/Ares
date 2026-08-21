@@ -119,6 +119,9 @@ class ResponsibleCrawler:
             self._cache[url] = result
             return result
         if not self._allowed(url):
+            from app.observability.metrics import inc
+
+            inc("crawler_robots_denied_total")
             result = CrawlResult(url, None, [], [], {}, "Blocked by robots.txt", False)
             self._cache[url] = result
             return result
@@ -130,9 +133,14 @@ class ResponsibleCrawler:
             self._last_request[host] = time.monotonic()
         last_error = "request failed"
         for attempt in range(self.policy.max_retries + 1):
+            started = time.monotonic()
             try:
                 response = self.client.get(url)
                 response.raise_for_status()
+                from app.observability.metrics import inc, observe
+
+                inc("crawler_pages_total", outcome="success")
+                observe("crawler_request_duration_seconds", time.monotonic() - started)
                 body = response.content[: self.policy.max_body_bytes]
                 html = body.decode(response.encoding or "utf-8", errors="replace")
                 products, links, metadata = extract_page(html, str(response.url))
@@ -140,6 +148,9 @@ class ResponsibleCrawler:
                 self._cache[url] = result
                 return result
             except (httpx.HTTPError, UnicodeError) as exc:
+                from app.observability.metrics import inc
+
+                inc("crawler_pages_total", outcome="failed")
                 last_error = str(exc)
                 if attempt < self.policy.max_retries:
                     time.sleep(min(2**attempt, 8))

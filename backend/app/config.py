@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     # `python -m app.worker` replicas and set EMBEDDED_WORKER=false here.
     embedded_worker: bool = True
 
+    # --- Rate limiting ---------------------------------------------------
+    rate_limit_disabled: bool = False
+    rate_limit_agent_per_minute: int = 10
+    rate_limit_research_per_minute: int = 10
+    rate_limit_login_per_minute: int = 20
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

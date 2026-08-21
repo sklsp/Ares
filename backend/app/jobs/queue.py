@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import ResearchJob, utcnow
@@ -70,7 +71,30 @@ def enqueue(
                "products_discovered": 0, "opportunities_found": 0},
     )
     db.add(job)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # A concurrent process enqueued the same signature first: return its row
+        # only if it is still active; otherwise allow a fresh submission.
+        db.rollback()
+        existing = db.execute(
+            select(ResearchJob)
+            .where(ResearchJob.idempotency_key == signature)
+            .where(ResearchJob.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]))
+        ).scalars().first()
+        if existing is not None:
+            return existing, False
+        # Terminal row holds the key; clear it so the new submission can proceed.
+        stale = db.execute(
+            select(ResearchJob).where(ResearchJob.idempotency_key == signature)
+        ).scalars().first()
+        if stale is not None:
+            stale.idempotency_key = None
+            db.commit()
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        return job, True
     db.refresh(job)
     return job, True
 

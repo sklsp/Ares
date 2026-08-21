@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.api.deps import DbSession
+from app.config import settings
 from app.db.models import ExternalProduct, ExternalStore, Opportunity, OpportunityEvidence, ResearchJob
 from app.schemas.intelligence import OpportunityOut, ResearchJobOut, ResearchJobRequest
 from app.services import intelligence as intelligence_service
 from app.services.intelligence_jobs import cancel_job, create_job
+from app.services.rate_limit import rate_limit
 
 router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 
 
-@router.post("/jobs", response_model=ResearchJobOut, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/jobs", response_model=ResearchJobOut, status_code=status.HTTP_202_ACCEPTED,
+             dependencies=[Depends(rate_limit(
+                 limit=settings.rate_limit_research_per_minute))])
 def start_job(payload: ResearchJobRequest, db: DbSession) -> ResearchJob:
     job, _created = create_job(db, payload.objective, payload.query, payload.start_urls)
     return job

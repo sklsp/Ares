@@ -6,17 +6,19 @@ import json
 import time
 from collections.abc import Iterator
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
 from app.agent import runner
 from app.api.deps import DbSession
+from app.config import settings
 from app.db.base import SessionLocal
 from app.db.models import AgentRun, AgentStep, ApprovalStatus, RunStatus
 from app.schemas.api import AgentRunRequest
 from app.schemas.domain import AgentRunDetail, AgentRunListResult
 from app.services import runs as run_service
+from app.services.rate_limit import rate_limit
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -24,7 +26,9 @@ STREAM_POLL_SECONDS = 0.4
 STREAM_MAX_SECONDS = 300
 
 
-@router.post("/run", response_model=AgentRunDetail, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/run", response_model=AgentRunDetail, status_code=status.HTTP_202_ACCEPTED,
+             dependencies=[Depends(rate_limit(
+                 limit=settings.rate_limit_agent_per_minute))])
 def start_run(payload: AgentRunRequest, db: DbSession) -> AgentRunDetail:
     """Queue a run. Returns immediately - follow it via /agent/runs/{id}/events."""
     run = runner.create_run(db, payload.message, payload.session_id)
