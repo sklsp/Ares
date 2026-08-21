@@ -1,0 +1,453 @@
+"""The agent execution loop.
+
+    understand -> decide -> call tools -> inspect results -> decide again
+                                       -> pause for approval on writes
+                                       -> final answer
+
+The loop is explicit and bounded (iterations, tool calls, wall clock). All
+state that survives a pause lives on the `AgentRun` row, so a run waiting for
+human approval can be resumed by any worker.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass
+from typing import Any
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.agent.prompts import system_prompt
+from app.config import Settings
+from app.db.models import (
+    AgentRun,
+    AgentStep,
+    ApprovalRequest,
+    ApprovalStatus,
+    RunStatus,
+    StepStatus,
+    StepType,
+    utcnow,
+)
+from app.integrations.base import EcommerceProvider, ProviderError
+from app.llm.base import LLMError, LLMProvider, Message, ToolCall
+from app.logging_config import get_logger
+from app.tools import ToolContext, ToolError, ToolRegistry
+from app.tools.products import describe_update
+
+logger = get_logger(__name__)
+
+MAX_STORED_OUTPUT_CHARS = 20_000
+
+
+class AgentTimeout(RuntimeError):
+    pass
+
+
+@dataclass(slots=True)
+class _Deadline:
+    expires_at: float
+
+    def check(self) -> None:
+        if time.monotonic() > self.expires_at:
+            raise AgentTimeout("The agent exceeded its time budget")
+
+
+class AgentEngine:
+    """Drives one run at a time against one database session."""
+
+    def __init__(
+        self,
+        db: Session,
+        llm: LLMProvider,
+        registry: ToolRegistry,
+        provider: EcommerceProvider,
+        settings: Settings,
+    ) -> None:
+        self.db = db
+        self.llm = llm
+        self.registry = registry
+        self.provider = provider
+        self.settings = settings
+        self.ctx = ToolContext(db=db, provider=provider, llm=llm)
+
+    # ------------------------------------------------------------------
+    # Public entry points
+    # ------------------------------------------------------------------
+    def start(self, run: AgentRun) -> AgentRun:
+        logger.info("Agent run started: id=%s request=%r", run.id, run.user_request[:80])
+        messages = [
+            Message(role="system", content=system_prompt()),
+            Message(role="user", content=run.user_request),
+        ]
+        self._save_messages(run, messages)
+        self._record(run, StepType.REQUEST, "Analyzing request")
+        return self._loop(run)
+
+    def resume(self, run: AgentRun) -> AgentRun:
+        logger.info("Agent run resumed: id=%s", run.id)
+        run.status = RunStatus.RUNNING.value
+        self.db.commit()
+        return self._loop(run)
+
+    # ------------------------------------------------------------------
+    # Loop
+    # ------------------------------------------------------------------
+    def _loop(self, run: AgentRun) -> AgentRun:
+        deadline = _Deadline(time.monotonic() + self.settings.agent_timeout_seconds)
+        try:
+            while True:
+                deadline.check()
+
+                # Finish any tool calls left over from the previous decision
+                # (this is also the resume-after-approval path).
+                if run.pending_tool_calls and self._drain_pending(run, deadline):
+                    # Set here rather than inside the pause branch so a resume
+                    # that finds its approval still undecided stays parked.
+                    run.status = RunStatus.WAITING_FOR_APPROVAL.value
+                    self.db.commit()
+                    return run
+
+                if run.iterations >= self.settings.agent_max_iterations:
+                    return self._wrap_up(run, "iteration limit reached")
+                if run.tool_calls_made >= self.settings.agent_max_tool_calls:
+                    return self._wrap_up(run, "tool call limit reached")
+
+                messages = self._load_messages(run)
+                response = self.llm.chat(messages, self.registry.llm_specs())
+                run.iterations += 1
+
+                if not response.tool_calls:
+                    return self._complete(run, response.content)
+
+                names = ", ".join(tc.name for tc in response.tool_calls)
+                self._record(run, StepType.DECISION, f"Decided to call: {names}")
+                messages.append(
+                    Message(
+                        role="assistant",
+                        content=response.content,
+                        tool_calls=response.tool_calls,
+                    )
+                )
+                self._save_messages(run, messages)
+                run.pending_tool_calls = [tc.to_dict() for tc in response.tool_calls]
+                self.db.commit()
+
+        except AgentTimeout as exc:
+            return self._fail(run, str(exc))
+        except LLMError as exc:
+            logger.warning("Run %s failed on LLM error: %s", run.id, exc)
+            return self._fail(run, str(exc))
+        except Exception as exc:  # noqa: BLE001 - never let a run kill the API
+            logger.exception("Run %s crashed", run.id)
+            return self._fail(run, f"Unexpected error: {exc}")
+
+    # ------------------------------------------------------------------
+    # Tool call handling
+    # ------------------------------------------------------------------
+    def _drain_pending(self, run: AgentRun, deadline: _Deadline) -> bool:
+        """Execute queued tool calls. Returns True if the run paused for approval."""
+        while run.pending_tool_calls:
+            deadline.check()
+            raw = dict(run.pending_tool_calls[0])
+            call = ToolCall.from_dict(raw)
+
+            if not self.registry.has(call.name):
+                self._finish_call(
+                    run,
+                    call,
+                    {"error": f"Unknown tool '{call.name}'"},
+                    status=StepStatus.ERROR,
+                    message=f"Unknown tool: {call.name}",
+                )
+                continue
+
+            tool = self.registry.get(call.name)
+            if tool.requires_approval:
+                decision = self._approval_state(run, raw, call)
+                if decision is None:
+                    return True  # waiting for a human
+                if decision.status == ApprovalStatus.REJECTED.value:
+                    self._record(
+                        run,
+                        StepType.APPROVAL_RESOLVED,
+                        f"Approval rejected for {call.name}",
+                        tool_name=call.name,
+                        status=StepStatus.ERROR,
+                    )
+                    self._finish_call(
+                        run,
+                        call,
+                        {
+                            "executed": False,
+                            "reason": "A human rejected this change. Do not retry it. "
+                            "Report it as not applied.",
+                            "note": decision.decision_note,
+                        },
+                        status=StepStatus.ERROR,
+                        message=f"{call.name} was rejected, nothing was changed",
+                    )
+                    continue
+
+                self._record(
+                    run,
+                    StepType.APPROVAL_RESOLVED,
+                    f"Approval granted for {call.name}",
+                    tool_name=call.name,
+                )
+
+            result, status, message = self._execute(run, call)
+            if status is StepStatus.OK and tool.requires_approval:
+                self._store_approval_result(run, raw, result)
+            self._finish_call(run, call, result, status=status, message=message)
+
+        return False
+
+    def _execute(self, run: AgentRun, call: ToolCall) -> tuple[Any, StepStatus, str]:
+        self._record(
+            run,
+            StepType.TOOL_CALL,
+            f"Calling {call.name}",
+            tool_name=call.name,
+            input=call.arguments,
+        )
+        started = time.monotonic()
+        run.tool_calls_made += 1
+        try:
+            result = self.registry.execute(call.name, call.arguments, self.ctx)
+        except (ToolError, ProviderError) as exc:
+            # Tool failures are data for the model, not a crash.
+            logger.warning("Tool %s failed: %s", call.name, exc)
+            return {"error": str(exc)}, StepStatus.ERROR, f"{call.name} failed: {exc}"
+
+        duration = int((time.monotonic() - started) * 1000)
+        return result, StepStatus.OK, _summarize(call.name, result, duration)
+
+    def _finish_call(
+        self,
+        run: AgentRun,
+        call: ToolCall,
+        result: Any,
+        *,
+        status: StepStatus,
+        message: str,
+    ) -> None:
+        self._record(
+            run,
+            StepType.TOOL_RESULT,
+            message,
+            tool_name=call.name,
+            output=result,
+            status=status,
+        )
+        messages = self._load_messages(run)
+        messages.append(Message.tool_result(call, result))
+        self._save_messages(run, messages)
+        run.pending_tool_calls = list(run.pending_tool_calls[1:])
+        self.db.commit()
+
+    # ------------------------------------------------------------------
+    # Approvals
+    # ------------------------------------------------------------------
+    def _approval_state(
+        self, run: AgentRun, raw: dict[str, Any], call: ToolCall
+    ) -> ApprovalRequest | None:
+        """Return the resolved approval, or None if the run must pause."""
+        approval_id = raw.get("approval_id")
+        if approval_id is not None:
+            approval = self.db.get(ApprovalRequest, approval_id)
+            if approval is None or approval.status == ApprovalStatus.PENDING.value:
+                return None
+            return approval
+
+        approval = self._request_approval(run, call)
+        raw["approval_id"] = approval.id
+        run.pending_tool_calls = [raw, *list(run.pending_tool_calls[1:])]
+        self.db.commit()
+        logger.info("Approval requested: run=%s tool=%s id=%s", run.id, call.name, approval.id)
+        return None
+
+    def _request_approval(self, run: AgentRun, call: ToolCall) -> ApprovalRequest:
+        preview, summary = self._build_preview(call)
+        approval = ApprovalRequest(
+            agent_run_id=run.id,
+            tool_name=call.name,
+            payload=call.arguments,
+            preview=preview,
+            summary=summary,
+        )
+        self.db.add(approval)
+        self.db.commit()
+        self.db.refresh(approval)
+        self._record(
+            run,
+            StepType.APPROVAL_REQUEST,
+            f"Waiting for approval: {summary}",
+            tool_name=call.name,
+            input=call.arguments,
+            status=StepStatus.PENDING,
+        )
+        return approval
+
+    def _build_preview(self, call: ToolCall) -> tuple[dict[str, Any] | None, str]:
+        if call.name != "update_product":
+            return {"arguments": call.arguments}, f"Run {call.name}"
+
+        product_id = call.arguments.get("product_id")
+        fields = {k: v for k, v in call.arguments.items() if k != "product_id" and v is not None}
+        try:
+            detail = self.provider.get_product(int(product_id))
+        except (ProviderError, TypeError, ValueError):
+            return {"arguments": call.arguments}, f"Update product {product_id}"
+
+        preview = describe_update(detail, fields)
+        changed = ", ".join(c["field"] for c in preview["changes"]) or "nothing"
+        return preview, f"Update {detail.title} ({detail.sku}): {changed}"
+
+    def _store_approval_result(self, run: AgentRun, raw: dict[str, Any], result: Any) -> None:
+        approval = self.db.get(ApprovalRequest, raw.get("approval_id"))
+        if approval is not None:
+            approval.result = result
+            self.db.commit()
+
+    # ------------------------------------------------------------------
+    # Termination
+    # ------------------------------------------------------------------
+    def _wrap_up(self, run: AgentRun, reason: str) -> AgentRun:
+        """Limit hit: ask for a summary once, without tools, then stop."""
+        logger.info("Run %s hit its %s", run.id, reason)
+        self._record(
+            run,
+            StepType.DECISION,
+            f"Stopping early ({reason}), summarising what was found",
+            status=StepStatus.ERROR,
+        )
+        messages = self._load_messages(run)
+        messages.append(
+            Message(
+                role="user",
+                content=(
+                    "Stop calling tools now and answer with what you already know. "
+                    "Be explicit about anything you could not finish."
+                ),
+            )
+        )
+        try:
+            response = self.llm.chat(messages, tools=None)
+            text = response.content
+        except LLMError as exc:
+            text = f"The agent stopped after the {reason} and could not summarise ({exc})."
+        return self._complete(run, text, note=f"Stopped early: {reason}")
+
+    def _complete(self, run: AgentRun, text: str, note: str | None = None) -> AgentRun:
+        final = (text or "").strip() or "The agent finished without producing an answer."
+        if note:
+            final = f"{final}\n\n({note})"
+        run.final_response = final
+        run.status = RunStatus.COMPLETED.value
+        run.completed_at = utcnow()
+        run.pending_tool_calls = []
+        self._record(run, StepType.FINAL, "Run completed", output={"response": final})
+        self.db.commit()
+        logger.info("Agent run completed: id=%s", run.id)
+        return run
+
+    def _fail(self, run: AgentRun, error: str) -> AgentRun:
+        run.status = RunStatus.FAILED.value
+        run.error = error
+        run.completed_at = utcnow()
+        run.pending_tool_calls = []
+        run.final_response = f"The run could not be completed: {error}"
+        self._record(run, StepType.ERROR, error, status=StepStatus.ERROR)
+        self.db.commit()
+        logger.error("Agent run failed: id=%s error=%s", run.id, error)
+        return run
+
+    # ------------------------------------------------------------------
+    # Persistence helpers
+    # ------------------------------------------------------------------
+    def _load_messages(self, run: AgentRun) -> list[Message]:
+        return [Message.from_dict(m) for m in run.messages or []]
+
+    def _save_messages(self, run: AgentRun, messages: list[Message]) -> None:
+        run.messages = [m.to_dict() for m in messages]
+
+    def _next_step_number(self, run: AgentRun) -> int:
+        current = self.db.execute(
+            select(func.max(AgentStep.step_number)).where(AgentStep.agent_run_id == run.id)
+        ).scalar()
+        return (current or 0) + 1
+
+    def _record(
+        self,
+        run: AgentRun,
+        step_type: StepType,
+        message: str,
+        *,
+        tool_name: str | None = None,
+        input: dict[str, Any] | None = None,
+        output: Any | None = None,
+        status: StepStatus = StepStatus.OK,
+        duration_ms: int | None = None,
+    ) -> AgentStep:
+        step = AgentStep(
+            agent_run_id=run.id,
+            step_number=self._next_step_number(run),
+            step_type=step_type.value,
+            message=message,
+            tool_name=tool_name,
+            input=input,
+            output=_truncate(output),
+            status=status.value,
+            duration_ms=duration_ms,
+        )
+        self.db.add(step)
+        self.db.commit()
+        return step
+
+
+# ----------------------------------------------------------------------
+def _truncate(output: Any) -> Any:
+    """Keep the audit trail useful without storing megabytes per step."""
+    if output is None:
+        return None
+    encoded = json.dumps(output, default=str)
+    if len(encoded) <= MAX_STORED_OUTPUT_CHARS:
+        return output
+    return {"truncated": True, "preview": encoded[:MAX_STORED_OUTPUT_CHARS]}
+
+
+def _summarize(tool_name: str, result: Any, duration_ms: int) -> str:
+    """One operational line for the activity feed - no chain of thought."""
+    if not isinstance(result, dict):
+        return f"{tool_name} returned a result ({duration_ms} ms)"
+
+    if "count" in result and "products" in result:
+        total = result.get("total_matching")
+        extra = f" of {total}" if total not in (None, result["count"]) else ""
+        return f"Retrieved {result['count']}{extra} products ({duration_ms} ms)"
+    if "analyzed" in result:
+        return (
+            f"Analyzed {result['analyzed']} products, "
+            f"returned {len(result.get('products', []))} weakest ({duration_ms} ms)"
+        )
+    if "count" in result and "items" in result:
+        return f"Retrieved {result['count']} inventory rows ({duration_ms} ms)"
+    if result.get("field") in ("description", "title"):
+        return (
+            f"Drafted a new {result['field']} for {result.get('sku')} "
+            f"(score {result.get('current_score')} -> {result.get('proposed_score')})"
+        )
+    if "updated_fields" in result:
+        fields = ", ".join(result["updated_fields"]) or "nothing"
+        return f"Updated {result.get('sku')}: {fields} ({duration_ms} ms)"
+    if "total_revenue" in result:
+        return (
+            f"Sales for {result.get('period_days')} days: "
+            f"{result.get('order_count')} orders, {result.get('total_revenue')} revenue"
+        )
+    if "runs" in result:
+        return f"Retrieved {result.get('count')} agent runs ({duration_ms} ms)"
+    return f"{tool_name} completed ({duration_ms} ms)"
