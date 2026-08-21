@@ -72,7 +72,10 @@ def _execute(job_id: int) -> None:
     """Claim and run one job. Safe to run concurrently across processes."""
     db = SessionLocal()
     try:
-        pending = due_jobs(db, limit=1)
+        try:
+            pending = due_jobs(db, limit=1)
+        except Exception:  # noqa: BLE001 - schema gone (test teardown): give up quietly
+            return
         if not any(j.id == job_id for j in pending):
             return  # claimed elsewhere, cancelled, or not yet due
         claimed = claim_next(db, worker_id=f"embedded:{id(_get_executor())}")
@@ -96,9 +99,12 @@ def _execute(job_id: int) -> None:
         except Exception as exc:  # noqa: BLE001 - record and requeue per policy
             from app.observability.metrics import inc
 
-            logger.exception("Embedded worker failed job %s", job_id)
             inc("research_jobs_total", outcome="failed")
-            db.rollback()
+            try:
+                logger.warning("Embedded worker failed job %s: %s", job_id, exc)
+                db.rollback()
+            except Exception:  # noqa: BLE001 - DB may already be gone
+                return
             fresh = db.get(ResearchJob, job_id)
             if fresh is not None:
                 record_failure(db, fresh, str(exc))

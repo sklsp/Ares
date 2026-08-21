@@ -145,6 +145,16 @@ def db():
     session.close()
 
 
+@pytest.fixture(autouse=True)
+def _clean_rate_limits():
+    """Rate limits are process-global; reset around every test."""
+    from app.services.rate_limit import reset_limits
+
+    reset_limits()
+    yield
+    reset_limits()
+
+
 @pytest.fixture
 def provider(db):
     return MockEcommerceProvider(db)

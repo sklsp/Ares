@@ -14,6 +14,7 @@ from app.db.identity import AuditLog, User
 from app.observability.metrics import inc
 from app.services import auth as auth_service
 from app.services.auth import Role
+from app.services.rate_limit import rate_limit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
