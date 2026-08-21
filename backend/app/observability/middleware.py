@@ -9,7 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.observability.metrics import Timer, inc, observe
+from app.observability.metrics import Timer, inc
 
 CORRELATION_HEADER = "X-Correlation-ID"
 
@@ -33,6 +33,5 @@ class instrument_requests(BaseHTTPMiddleware):
             response = await call_next(request)
         inc("http_requests_total", method=method, path=path,
             status=str(response.status_code))
-        observe("http_request_duration_seconds", 0.0, method=method, path=path)
         response.headers[CORRELATION_HEADER] = correlation_id
         return response

@@ -37,9 +37,6 @@ def ensure_schema() -> None:
     Stamping alembic keeps `alembic upgrade head` working afterwards instead
     of failing on tables that already exist.
     """
-    if inspect(engine).has_table("products") and inspect(engine).has_table("external_stores"):
-        return
-
     if inspect(engine).has_table("products"):
         from alembic.config import Config
         from alembic import command

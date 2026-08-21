@@ -21,6 +21,9 @@ os.environ["AGENT_MAX_ITERATIONS"] = "5"
 os.environ["AGENT_MAX_TOOL_CALLS"] = "8"
 os.environ["AGENT_TIMEOUT_SECONDS"] = "30"
 os.environ["LOG_LEVEL"] = "WARNING"
+# Tests exercise queue semantics directly; disable the optional embedded
+# executor so short-lived test databases cannot race background threads.
+os.environ["EMBEDDED_WORKER"] = "false"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import delete  # noqa: E402

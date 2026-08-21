@@ -339,6 +339,9 @@ Open <http://localhost:3000>.
 | `LOG_LEVEL` | `INFO` | |
 | `API_KEY` | — | When set, every request needs a matching `X-API-Key` header. Leave empty for local dev; set in production. |
 | `CRAWLER_ALLOW_PRIVATE_ADDRESSES` | `false` | SSRF guard: block private/loopback crawl targets unless explicitly enabled for fixtures. |
+| `EMBEDDED_WORKER` | `true` | Local API worker; set `false` for production API replicas and run `python -m app.worker`. |
+| `RATE_LIMIT_DISABLED` | `false` | Disable only for controlled tests. |
+| `RATE_LIMIT_AGENT_PER_MINUTE` / `RATE_LIMIT_RESEARCH_PER_MINUTE` / `RATE_LIMIT_LOGIN_PER_MINUTE` | `10` / `10` / `20` | Per-process limits for expensive operations. |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Frontend → API (build-time in Docker) |
 
 No secrets are committed. `.env` files are gitignored; see `.env.example` for the shape.
@@ -346,6 +349,18 @@ No secrets are committed. `.env` files are gitignored; see `.env.example` for th
 ### Reliability
 
 Research jobs are durable rows. If the backend restarts while a job is queued or running, startup recovery resubmits it automatically; jobs exceeding the recovery window are marked `FAILED` with a clear error instead of staying stuck in `RUNNING`.
+
+### Production worker architecture
+
+For production, run multiple API replicas with `EMBEDDED_WORKER=false` and one or more independent worker processes:
+
+```powershell
+python -m app.worker
+```
+
+Workers claim queued rows atomically from the shared database, honor priority/idempotency/retry state, reclaim stale work, and can be restarted independently of the API. `/metrics` exposes Prometheus-compatible request, crawler, and job counters/histograms. Every response includes an `X-Correlation-ID` for log correlation.
+
+Authentication supports password-backed sessions via `/auth/register`, `/auth/login`, `/auth/me`, and `/auth/logout`; server-side roles are `admin`, `manager`, `analyst`, and `viewer`. Manager-only audit records are available at `/auth/audit`. The legacy `X-API-Key` remains available for trusted machine clients when `API_KEY` is configured.
 
 ---
 

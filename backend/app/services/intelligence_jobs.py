@@ -102,7 +102,9 @@ def _execute(job_id: int) -> None:
             inc("research_jobs_total", outcome="failed")
             try:
                 logger.warning("Embedded worker failed job %s: %s", job_id, exc)
-                db.rollback()
+                transaction = db.get_transaction()
+                if transaction is not None and transaction.is_active:
+                    db.rollback()
             except Exception:  # noqa: BLE001 - DB may already be gone
                 return
             fresh = db.get(ResearchJob, job_id)
