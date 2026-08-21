@@ -1,69 +1,84 @@
-import Image from "next/image";
+"use client";
+
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, AlertTriangle, ArrowUpRight, Check, ChevronRight, CircleDot, Clock3, Package, RefreshCw, Search, Send, ShieldCheck, Sparkles, X, type LucideIcon } from "lucide-react";
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+type Product = { id: number; sku: string; title: string; description: string; category: string; price: number; status: string; inventory_quantity: number; content: { score: number; grade: string; issues: string[] } };
+type Analytics = { product_count: number; active_product_count: number; category_count: number; total_inventory_units: number; low_stock_count: number; out_of_stock_count: number; average_content_score: number; weak_content_count: number; agent_runs_total: number; agent_runs_pending_approval: number; sales: { order_count: number; units_sold: number; total_revenue: number; average_order_value: number }; top_sellers: { title: string; units_sold: number }[] };
+type Approval = { id: number; agent_run_id: number; tool_name: string; summary: string; status: string; preview?: { changes?: { field: string; current: unknown; proposed: unknown }[]; sku?: string; title?: string } };
+type Run = { id: number; status: string; user_request: string; final_response?: string; error?: string; steps: { id: number; step_type: string; message: string; tool_name?: string; status: string }[]; approvals: Approval[] };
+
+async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${API}${path}`, { ...options, headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) } });
+  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.detail ?? body.error ?? `Request failed (${response.status})`); }
+  return response.json();
+}
+
+const money = (value: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
 
 export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+  const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [query, setQuery] = useState("");
+  const [request, setRequest] = useState("");
+  const [run, setRun] = useState<Run | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setError("");
+    try {
+      const [summary, catalog, pending] = await Promise.all([api<Analytics>("/analytics/summary"), api<{ items: Product[] }>(`/products?limit=12${query ? `&search=${encodeURIComponent(query)}` : ""}`), api<Approval[]>("/approvals")]);
+      setAnalytics(summary); setProducts(catalog.items); setApprovals(pending);
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not reach the operations API"); }
+    finally { setLoading(false); }
+  }, [query]);
+
+  // Fetching external data on mount and when the search filter changes is the effect's purpose.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [load]);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); if (!request.trim()) return;
+    setSending(true); setError(""); setRun(null);
+    try {
+      const created = await api<Run>("/agent/run", { method: "POST", body: JSON.stringify({ message: request, session_id: "dashboard" }) });
+      setRun(created); setRequest("");
+      const source = new EventSource(`${API}/agent/runs/${created.id}/events`);
+      source.addEventListener("step", (event) => { const step = JSON.parse((event as MessageEvent).data); setRun((current) => current ? { ...current, steps: [...current.steps, step] } : current); });
+      source.addEventListener("paused", () => { source.close(); void loadRun(created.id); void load(); });
+      source.addEventListener("done", (event) => { setRun((current) => current ? { ...current, ...JSON.parse((event as MessageEvent).data) } : current); source.close(); void load(); });
+      source.addEventListener("error", () => { source.close(); void loadRun(created.id); });
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not start the agent"); }
+    finally { setSending(false); }
+  };
+
+  const loadRun = async (id: number) => { try { setRun(await api<Run>(`/agent/runs/${id}`)); } catch (err) { setError(err instanceof Error ? err.message : "Could not load run"); } };
+  const decide = async (approval: Approval, approved: boolean) => { try { await api(`/approvals/${approval.id}/${approved ? "approve" : "reject"}`, { method: "POST", body: JSON.stringify({}) }); await load(); if (run) await loadRun(run.id); } catch (err) { setError(err instanceof Error ? err.message : "Could not resolve approval"); } };
+
+  const healthLabel = useMemo(() => error ? "API attention needed" : loading ? "Connecting" : "Store connected", [error, loading]);
+
+  return <main className="console-shell">
+    <aside className="sidebar">
+      <div className="brand"><div className="brand-mark"><Sparkles size={17} /></div><div><strong>Ops Agent</strong><span>commerce control room</span></div></div>
+      <nav><a className="active"><Activity size={17} /> Overview</a><a href="#catalog"><Package size={17} /> Catalog</a><a href="#approvals"><ShieldCheck size={17} /> Approvals <b>{approvals.length}</b></a></nav>
+      <div className="sidebar-foot"><span className={`status-dot ${error ? "bad" : ""}`} /> {healthLabel}<small>Local operations workspace</small></div>
+    </aside>
+    <section className="workspace">
+      <header className="topbar"><div><p className="eyebrow">Tuesday, August 21, 2026</p><h1>Good morning, manager.</h1></div><button className="icon-button" onClick={() => { setLoading(true); void load(); }} aria-label="Refresh data" title="Refresh data"><RefreshCw size={17} /></button></header>
+      {error && <div className="alert"><AlertTriangle size={18} /><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss error"><X size={16} /></button></div>}
+      <section className="hero-panel"><div><span className="kicker"><CircleDot size={12} /> LIVE STORE SIGNAL</span><h2>Keep the catalog<br /><em>moving forward.</em></h2><p>Ask the operations agent to investigate performance, find weak copy, or prepare a catalog change for your approval.</p></div><div className="hero-orbit"><div className="orbit-line" /><Sparkles size={31} /><span>AI</span></div></section>
+      <section className="metric-grid">{([["Catalog", analytics?.product_count ?? "-", `${analytics?.active_product_count ?? 0} active`, Package], ["Inventory", analytics?.total_inventory_units ?? "-", `${analytics?.low_stock_count ?? 0} low stock`, ArrowUpRight], ["Revenue · 30d", analytics ? money(analytics.sales.total_revenue) : "-", `${analytics?.sales.order_count ?? 0} orders`, Activity], ["Content health", analytics ? `${analytics.average_content_score}/100` : "-", `${analytics?.weak_content_count ?? 0} need attention`, Sparkles]] as [string, string | number, string, LucideIcon][]).map(([label, value, note, Icon]) => <article className="metric" key={String(label)}><div className="metric-label"><span>{label}</span><Icon size={16} /></div><strong>{value}</strong><small>{note}</small></article>)}</section>
+      <div className="content-grid">
+        <section className="panel agent-panel"><div className="panel-heading"><div><span className="section-number">01 / AGENT</span><h3>What should we investigate?</h3></div><span className="live-chip"><span /> ready</span></div><form onSubmit={submit}><textarea value={request} onChange={(event) => setRequest(event.target.value)} placeholder="e.g. Find our weakest product descriptions and suggest improvements" rows={3} /><div className="prompt-footer"><span>Reads store data first. Writes always pause for approval.</span><button className="primary-button" disabled={sending || !request.trim()}>{sending ? "Working..." : "Run agent"}<Send size={15} /></button></div></form>{run && <div className="run-card"><div className="run-header"><span className={`run-status ${run.status.toLowerCase()}`}>{run.status.replaceAll("_", " ")}</span><span>Run #{run.id}</span></div><div className="activity-feed">{run.steps.map((step) => <div className="activity-item" key={step.id}><span className="activity-icon">{step.step_type === "tool_call" ? <ArrowUpRight size={13} /> : <Clock3 size={13} />}</span><div><strong>{step.tool_name ?? step.step_type.replaceAll("_", " ")}</strong><p>{step.message}</p></div></div>)}</div>{run.final_response && <p className="final-response">{run.final_response}</p>}{run.error && <p className="error-text">{run.error}</p>}</div>}</section>
+        <section className="panel sellers-panel"><div className="panel-heading"><div><span className="section-number">02 / SIGNAL</span><h3>Top sellers</h3></div><span className="muted">30 days</span></div>{analytics?.top_sellers.map((seller, index) => <div className="seller-row" key={seller.title}><span className="rank">0{index + 1}</span><div><strong>{seller.title}</strong><span>{seller.units_sold} units sold</span></div><ChevronRight size={15} /></div>) ?? <div className="empty">Waiting for store data</div>}</section>
+      </div>
+      <section className="panel catalog-panel" id="catalog"><div className="panel-heading"><div><span className="section-number">03 / CATALOG</span><h3>Product pulse</h3></div><label className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search catalog" /></label></div><div className="table-wrap"><table><thead><tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Content</th></tr></thead><tbody>{products.map((product) => <tr key={product.id}><td><strong>{product.title}</strong><span>{product.sku}</span></td><td>{product.category}</td><td>{money(product.price)}</td><td><span className={product.inventory_quantity <= 10 ? "stock low" : "stock"}>{product.inventory_quantity}</span></td><td><span className={`grade ${product.content.grade}`}>{product.content.score}</span></td></tr>)}</tbody></table>{!products.length && !loading && <div className="empty">No products match that search.</div>}</div></section>
+      <section className="panel approvals-panel" id="approvals"><div className="panel-heading"><div><span className="section-number">04 / SAFETY</span><h3>Approval queue</h3></div><span className="muted">Human decision required</span></div>{approvals.map((approval) => <div className="approval-row" key={approval.id}><div className="approval-copy"><span className="approval-icon"><ShieldCheck size={16} /></span><div><strong>{approval.summary}</strong><span>{approval.tool_name} · run #{approval.agent_run_id}</span>{approval.preview?.changes?.map((change) => <small key={change.field}>{change.field}: <s>{String(change.current)}</s> <b>{String(change.proposed)}</b></small>)}</div></div><div className="approval-actions"><button className="reject-button" onClick={() => void decide(approval, false)} aria-label={`Reject approval ${approval.id}`}><X size={15} /></button><button className="approve-button" onClick={() => void decide(approval, true)}><Check size={15} /> Approve</button></div></div>)}{!approvals.length && <div className="empty"><Check size={17} /> Nothing waiting. Approved work will appear in the run activity.</div>}</section>
+    </section>
+  </main>;
 }
