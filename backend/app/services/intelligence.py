@@ -49,10 +49,22 @@ def _upsert_product(db: Session, store: ExternalStore, product, captured_at: dat
     return existing
 
 
-def _upsert_store(db: Session, domain: str, niche: str, name: str) -> ExternalStore:
-    store = db.execute(select(ExternalStore).where(ExternalStore.domain == domain)).scalar_one_or_none()
+def _upsert_store(db: Session, domain: str, niche: str, name: str,
+                  organization_id: int | None = None) -> ExternalStore:
+    """Find or create the tenant's record for a crawled domain."""
+    store = db.execute(
+        select(ExternalStore)
+        .where(ExternalStore.domain == domain)
+        .where(
+            (ExternalStore.organization_id == organization_id)
+            | (ExternalStore.organization_id.is_(None) & (organization_id.is_(None)))
+            if organization_id is None
+            else ExternalStore.organization_id == organization_id
+        )
+    ).scalars().first()
     if store is None:
-        store = ExternalStore(domain=domain, name=name, niche=niche)
+        store = ExternalStore(domain=domain, name=name, niche=niche,
+                              organization_id=organization_id)
         db.add(store)
         db.flush()
     elif name and store.name == store.domain:
@@ -61,7 +73,7 @@ def _upsert_store(db: Session, domain: str, niche: str, name: str) -> ExternalSt
 
 
 def _opportunity(db: Session, job: ResearchJob, kind: str, title: str, summary: str, action: str, score: float, confidence: float, sources: list[str], evidence: dict[str, Any], competition: str, signals: dict[str, Any]) -> Opportunity:
-    item = Opportunity(research_job_id=job.id, type=kind, title=title, summary=summary, recommended_action=action, source_urls=list(dict.fromkeys(sources)), evidence=evidence, score=round(max(0, min(100, score)), 1), confidence=round(max(0, min(1, confidence)), 2), competition_level=competition, demand_signals=signals)
+    item = Opportunity(research_job_id=job.id, organization_id=job.organization_id, type=kind, title=title, summary=summary, recommended_action=action, source_urls=list(dict.fromkeys(sources)), evidence=evidence, score=round(max(0, min(100, score)), 1), confidence=round(max(0, min(1, confidence)), 2), competition_level=competition, demand_signals=signals)
     db.add(item)
     db.flush()
     for source in item.source_urls:
@@ -97,7 +109,8 @@ def run_investigation(db: Session, job: ResearchJob, *, start_urls: list[str] | 
             if result.error or not result.products:
                 continue
             domain = urlparse(result.url).netloc.lower()
-            store = _upsert_store(db, domain, job.query, _store_name(result, domain))
+            store = _upsert_store(db, domain, job.query, _store_name(result, domain),
+                                  organization_id=job.organization_id)
             store.platform = "shopify" if "shopify" in str(result.metadata).lower() else store.platform
             store.last_crawled_at = utcnow(); store.crawl_status = "ok"
             for extracted in result.products:

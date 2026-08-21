@@ -5,7 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 
+from app.api.auth import current_user
 from app.api.deps import DbSession
+from app.api.tenancy import TenantContext, get_tenant, scoped_or_404
 from app.config import settings
 from app.db.models import ExternalProduct, ExternalStore, Opportunity, OpportunityEvidence, ResearchJob
 from app.schemas.intelligence import OpportunityOut, ResearchJobOut, ResearchJobRequest
@@ -19,37 +21,40 @@ router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 @router.post("/jobs", response_model=ResearchJobOut, status_code=status.HTTP_202_ACCEPTED,
              dependencies=[Depends(rate_limit(
                  limit=settings.rate_limit_research_per_minute))])
-def start_job(payload: ResearchJobRequest, db: DbSession) -> ResearchJob:
-    job, _created = create_job(db, payload.objective, payload.query, payload.start_urls)
+def start_job(payload: ResearchJobRequest, db: DbSession,
+              tenant: TenantContext = Depends(get_tenant)) -> ResearchJob:
+    job, _created = create_job(db, payload.objective, payload.query, payload.start_urls,
+                               organization_id=tenant.organization_id)
     return job
 
 
 @router.get("/jobs", response_model=list[ResearchJobOut])
-def list_jobs(db: DbSession, limit: int = Query(default=20, ge=1, le=100)) -> list[ResearchJob]:
-    return list(db.execute(select(ResearchJob).order_by(ResearchJob.id.desc()).limit(limit)).scalars().all())
+def list_jobs(db: DbSession, limit: int = Query(default=20, ge=1, le=100),
+              tenant: TenantContext = Depends(get_tenant)) -> list[ResearchJob]:
+    query = tenant.scoped(select(ResearchJob).order_by(ResearchJob.id.desc()).limit(limit))
+    return list(db.execute(query).scalars().all())
 
 
 @router.get("/jobs/{job_id}", response_model=ResearchJobOut)
-def get_job(job_id: int, db: DbSession) -> ResearchJob:
-    job = db.get(ResearchJob, job_id)
-    if job is None:
-        raise HTTPException(404, f"Research job {job_id} not found")
-    return job
+def get_job(job_id: int, db: DbSession,
+            tenant: TenantContext = Depends(get_tenant)) -> ResearchJob:
+    return scoped_or_404(tenant, db, ResearchJob, job_id)
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=ResearchJobOut)
-def stop_job(job_id: int, db: DbSession) -> ResearchJob:
-    job = db.get(ResearchJob, job_id)
-    if job is None:
-        raise HTTPException(404, f"Research job {job_id} not found")
+def stop_job(job_id: int, db: DbSession,
+             tenant: TenantContext = Depends(get_tenant)) -> ResearchJob:
+    job = scoped_or_404(tenant, db, ResearchJob, job_id)
     return cancel_job(db, job)
 
 
 @router.get("/stores")
-def list_stores(db: DbSession, limit: int = Query(default=50, ge=1, le=200)) -> list[dict]:
-    stores = db.execute(
+def list_stores(db: DbSession, limit: int = Query(default=50, ge=1, le=200),
+                tenant: TenantContext = Depends(get_tenant)) -> list[dict]:
+    query = tenant.scoped(
         select(ExternalStore).order_by(ExternalStore.last_crawled_at.desc()).limit(limit)
-    ).scalars().all()
+    )
+    stores = db.execute(query).scalars().all()
     # One grouped query instead of one COUNT per store (avoids N+1).
     counts = dict(
         db.execute(
@@ -104,22 +109,24 @@ def list_external_products(
 
 
 @router.get("/opportunities", response_model=list[OpportunityOut])
-def list_opportunities(db: DbSession, limit: int = Query(default=50, ge=1, le=200), kind: str | None = None) -> list[Opportunity]:
-    return intelligence_service.list_opportunities(db, limit, kind)
+def list_opportunities(db: DbSession, limit: int = Query(default=50, ge=1, le=200), kind: str | None = None,
+                       tenant: TenantContext = Depends(get_tenant)) -> list[Opportunity]:
+    query = tenant.scoped(select(Opportunity).order_by(Opportunity.score.desc()).limit(limit))
+    if kind:
+        query = query.where(Opportunity.type == kind)
+    return list(db.execute(query).scalars().all())
 
 
 @router.get("/opportunities/{opportunity_id}", response_model=OpportunityOut)
-def get_opportunity(opportunity_id: int, db: DbSession) -> Opportunity:
-    opportunity = intelligence_service.get_opportunity(db, opportunity_id)
-    if opportunity is None:
-        raise HTTPException(404, f"Opportunity {opportunity_id} not found")
-    return opportunity
+def get_opportunity(opportunity_id: int, db: DbSession,
+                    tenant: TenantContext = Depends(get_tenant)) -> Opportunity:
+    return scoped_or_404(tenant, db, Opportunity, opportunity_id)
 
 
 @router.get("/opportunities/{opportunity_id}/evidence")
-def evidence(opportunity_id: int, db: DbSession) -> list[dict]:
-    if intelligence_service.get_opportunity(db, opportunity_id) is None:
-        raise HTTPException(404, f"Opportunity {opportunity_id} not found")
+def evidence(opportunity_id: int, db: DbSession,
+             tenant: TenantContext = Depends(get_tenant)) -> list[dict]:
+    scoped_or_404(tenant, db, Opportunity, opportunity_id)
     rows = db.execute(
         select(OpportunityEvidence).where(
             OpportunityEvidence.opportunity_id == opportunity_id

@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import delete  # noqa: E402
 
 from app.db.base import Base, SessionLocal, engine  # noqa: E402
+from app.db.identity import AuditLog, Organization, Session, User  # noqa: E402
 from app.db.models import (  # noqa: E402
     AgentRun,
     ApprovalRequest,
@@ -112,7 +113,8 @@ def _schema():
 def db():
     """A clean, freshly seeded database for every test."""
     session = SessionLocal()
-    for model in (OpportunityEvidence, Opportunity, ResearchJob, ProductSnapshot,
+    for model in (AuditLog, Session, User, Organization, OpportunityEvidence,
+                  Opportunity, ResearchJob, ProductSnapshot,
                   ExternalProduct, ExternalStore, ApprovalRequest, Order, Inventory,
                   Product, AgentRun):
         session.execute(delete(model))

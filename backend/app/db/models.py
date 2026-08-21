@@ -140,6 +140,10 @@ class AgentRun(Base):
     __tablename__ = "agent_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Tenant scope: derived server-side from authenticated identity, never
+    # trusted from client input. NULL only for legacy rows created before
+    # multi-tenancy; those remain visible to all tenants until migrated.
+    organization_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     session_id: Mapped[str] = mapped_column(String(64), index=True, default="default")
     user_request: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
@@ -261,7 +265,8 @@ class ExternalStore(Base):
     __tablename__ = "external_stores"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    domain: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    domain: Mapped[str] = mapped_column(String(255), index=True)
     name: Mapped[str] = mapped_column(String(255), default="")
     niche: Mapped[str] = mapped_column(String(160), default="")
     platform: Mapped[str] = mapped_column(String(40), default="unknown")
@@ -325,6 +330,7 @@ class ResearchJob(Base):
     __tablename__ = "research_jobs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     objective: Mapped[str] = mapped_column(Text)
     query: Mapped[str] = mapped_column(String(255), index=True)
     status: Mapped[str] = mapped_column(String(24), default=ResearchJobStatus.QUEUED.value, index=True)
@@ -351,6 +357,7 @@ class Opportunity(Base):
     __tablename__ = "opportunities"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     research_job_id: Mapped[int | None] = mapped_column(
         ForeignKey("research_jobs.id", ondelete="SET NULL"), nullable=True, index=True
     )

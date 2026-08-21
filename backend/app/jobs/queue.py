@@ -45,14 +45,18 @@ def enqueue(
     start_urls: list[str] | None = None,
     priority: int = 5,
     idempotency_key: str | None = None,
+    organization_id: int | None = None,
 ) -> tuple[ResearchJob, bool]:
     """Create a research job. Returns (job, created).
 
     With an idempotency key, a duplicate submission returns the existing
     QUEUED/RUNNING job instead of creating a second one.
     """
-    signature = idempotency_key or job_signature(objective, query, start_urls or [])
-    if signature:
+    # Idempotency is per-tenant: two organizations researching the same
+    # niche are independent investigations.
+    scope_prefix = f"org{organization_id}:" if organization_id else ""
+    signature = idempotency_key or f"{scope_prefix}{job_signature(objective, query, start_urls or [])}"
+    if idempotency_key is None and signature:
         existing = db.execute(
             select(ResearchJob)
             .where(ResearchJob.idempotency_key == signature)
@@ -65,6 +69,7 @@ def enqueue(
     job = ResearchJob(
         objective=objective,
         query=query,
+        organization_id=organization_id,
         priority=priority,
         idempotency_key=signature,
         stats={"domains_discovered": 0, "pages_discovered": 0, "pages_crawled": 0,

@@ -49,11 +49,12 @@ def create_job(
     start_urls: list[str] | None = None,
     *,
     priority: int = 5,
+    organization_id: int | None = None,
 ) -> tuple[ResearchJob, bool]:
     """Enqueue a research job. Returns (job, created)."""
     job, created = enqueue(
         db, objective=objective, query=query, start_urls=start_urls,
-        priority=priority,
+        priority=priority, organization_id=organization_id,
     )
     if created and settings.embedded_worker:
         _get_executor().submit(_execute, job.id)
