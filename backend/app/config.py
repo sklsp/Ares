@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     # Leave empty for single-process local development (in-process limiter).
     redis_url: str | None = None
 
+    # --- Observability ---------------------------------------------------
+    # Tracing is optional: with OTEL_ENABLED=false the app runs identically
+    # with no collector. Set OTEL_EXPORTER_OTLP_ENDPOINT in production.
+    otel_enabled: bool = False
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_service_name: str = "ecommerce-agent"
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

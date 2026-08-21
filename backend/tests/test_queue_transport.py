@@ -47,8 +47,10 @@ def test_two_workers_receive_different_jobs(backend):
     for thread in threads:
         thread.join()
 
+    # Guarantee: every job delivered exactly once (a fast worker may take
+    # both — distribution is opportunistic, exclusivity is the contract).
     assert len(delivered) == 2
-    assert len({worker for worker, _ in delivered}) == 2
+    assert len({job_id for _, job_id in delivered}) == 2
 
 
 def test_same_job_never_delivered_twice_while_processing(backend):

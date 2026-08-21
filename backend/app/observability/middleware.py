@@ -10,6 +10,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.observability.metrics import Timer, inc
+from app.observability.tracing import get_tracer
 
 CORRELATION_HEADER = "X-Correlation-ID"
 
@@ -29,7 +30,11 @@ class instrument_requests(BaseHTTPMiddleware):
 
         method = request.method
         path = request.scope.get("route").path if request.scope.get("route") else request.url.path
-        with Timer("http_request_duration_seconds", method=method, path=path):
+        span_cm = get_tracer().start_as_current_span(
+            f"{method} {path}", attributes={"http.method": method, "http.route": path,
+                                             "correlation.id": correlation_id}
+        )
+        with span_cm as _span, Timer("http_request_duration_seconds", method=method, path=path):
             response = await call_next(request)
         inc("http_requests_total", method=method, path=path,
             status=str(response.status_code))

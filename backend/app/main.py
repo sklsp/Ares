@@ -12,7 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app import __version__
 from app.agent import runner
-from app.api import agent, analytics, approvals, health, intelligence, products
+from app.api import admin, agent, analytics, approvals, health, intelligence, products
 from app.api import auth as auth_api
 from app.config import settings
 from app.integrations.base import ProductNotFoundError, ProviderError
@@ -93,6 +93,7 @@ def create_app() -> FastAPI:
     for router in (
         health.router,
         auth_api.router,
+        admin.router,
         agent.router,
         approvals.router,
         products.router,

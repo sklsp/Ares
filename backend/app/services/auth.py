@@ -126,5 +126,5 @@ def ensure_default_organization(db: Session) -> Organization:
 
 __all__ = ["Organization", "Role", "SESSION_TTL", "Session", "User",
            "audit", "create_session", "ensure_default_organization",
-           "hash_password", "resolve_session", "revoke_session",
+           "hash_password", "require_role", "resolve_session", "revoke_session",
            "role_at_least", "verify_password"]

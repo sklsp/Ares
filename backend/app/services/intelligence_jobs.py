@@ -20,6 +20,7 @@ from app.jobs.queue import record_failure, transition
 from app.jobs.transport import get_backend, register_handler
 from app.logging_config import get_logger
 from app.observability.metrics import Timer, inc
+from app.observability.tracing import traced
 
 logger = get_logger(__name__)
 
@@ -44,7 +45,9 @@ def create_job(
     )
     if created:
         try:
-            get_backend().enqueue(JOB_TYPE, {"job_id": job.id}, job_id=f"job-{job.id}")
+            with traced("research.enqueue", {"job.id": job.id,
+                                             "organization.id": organization_id}):
+                get_backend().enqueue(JOB_TYPE, {"job_id": job.id}, job_id=f"job-{job.id}")
             inc("jobs_enqueued_total", type=JOB_TYPE)
         except Exception:  # noqa: BLE001 - queue outage must not lose the record
             logger.exception("Queue unavailable; job %s stays QUEUED for recovery", job.id)
@@ -86,7 +89,8 @@ def execute_job(job_id: int) -> None:
                 allow_private_addresses=settings.crawler_allow_private_addresses,
             ))
             try:
-                with Timer("research_job_duration_seconds"):
+                with traced("research.execute", {"job.id": job_id}), \
+                     Timer("research_job_duration_seconds"):
                     from app.services.intelligence import run_investigation
 
                     run_investigation(db, claimed, crawler=crawler)
