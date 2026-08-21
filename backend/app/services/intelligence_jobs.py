@@ -1,14 +1,12 @@
-"""Research job scheduling on the durable queue.
+"""Research job scheduling.
 
-The API only enqueues; execution happens in the embedded worker (local
-development default) or in standalone `python -m app.worker` processes
-(production). Both claim jobs atomically from the same table.
+The database row is the source of truth for business state; the queue
+transport (Redis in production, inline in tests/local dev) is only the
+execution mechanism. The API creates the durable record, enqueues, and
+returns immediately — workers do the rest.
 """
 
 from __future__ import annotations
-
-import threading
-from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,29 +15,17 @@ from app.config import settings
 from app.db.base import SessionLocal
 from app.db.models import ResearchJob, utcnow
 from app.jobs import JobStatus
-from app.jobs.queue import claim_next, due_jobs, enqueue, record_failure, transition
+from app.jobs.queue import enqueue as db_enqueue
+from app.jobs.queue import record_failure, transition
+from app.jobs.transport import get_backend, register_handler
 from app.logging_config import get_logger
-from app.services.intelligence import run_investigation
+from app.observability.metrics import Timer, inc
 
 logger = get_logger(__name__)
 
-_executor: ThreadPoolExecutor | None = None
-_executor_lock = threading.Lock()
-
-
-def _get_executor() -> ThreadPoolExecutor:
-    global _executor
-    with _executor_lock:
-        if _executor is None or _executor._shutdown:  # noqa: SLF001 - recreate after shutdown
-            _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="research")
-        return _executor
-
-
-def shutdown() -> None:
-    with _executor_lock:
-        if _executor is not None:
-            _executor.shutdown(wait=False, cancel_futures=True)
-            _executor = None
+JOB_TYPE = "research"
+# A job parked in processing by a dead worker is reclaimable after this long.
+STALE_PROCESSING_SECONDS = 300.0
 
 
 def create_job(
@@ -51,13 +37,23 @@ def create_job(
     priority: int = 5,
     organization_id: int | None = None,
 ) -> tuple[ResearchJob, bool]:
-    """Enqueue a research job. Returns (job, created)."""
-    job, created = enqueue(
+    """Create the durable record and enqueue for execution."""
+    job, created = db_enqueue(
         db, objective=objective, query=query, start_urls=start_urls,
         priority=priority, organization_id=organization_id,
     )
-    if created and settings.embedded_worker:
-        _get_executor().submit(_execute, job.id)
+    if created:
+        try:
+            get_backend().enqueue(JOB_TYPE, {"job_id": job.id}, job_id=f"job-{job.id}")
+            inc("jobs_enqueued_total", type=JOB_TYPE)
+        except Exception:  # noqa: BLE001 - queue outage must not lose the record
+            logger.exception("Queue unavailable; job %s stays QUEUED for recovery", job.id)
+            inc("jobs_enqueue_failed_total", type=JOB_TYPE)
+            if not settings.embedded_worker:
+                # Without an embedded poller nothing would pick it up: surface it.
+                raise RuntimeError(
+                    "Job saved but the queue is unavailable; it will run when the queue recovers"
+                ) from None
     return job, created
 
 
@@ -68,46 +64,40 @@ def cancel_job(db: Session, job: ResearchJob) -> ResearchJob:
     return job
 
 
-# -- embedded worker -----------------------------------------------------
-def _execute(job_id: int) -> None:
-    """Claim and run one job. Safe to run concurrently across processes."""
+def execute_job(job_id: int) -> None:
+    """Run one research job by id. Idempotent: safe on duplicate delivery.
+
+    Guards against double execution because the state machine rejects
+    QUEUED -> RUNNING transitions from a non-QUEUED row atomically.
+    """
+    from app.intelligence.crawler import CrawlPolicy, ResponsibleCrawler
+
     db = SessionLocal()
     try:
-        try:
-            pending = due_jobs(db, limit=1)
-        except Exception:  # noqa: BLE001 - schema gone (test teardown): give up quietly
-            return
-        if not any(j.id == job_id for j in pending):
-            return  # claimed elsewhere, cancelled, or not yet due
-        claimed = claim_next(db, worker_id=f"embedded:{id(_get_executor())}")
-        if claimed is None or claimed.id != job_id:
+        job = db.get(ResearchJob, job_id)
+        if job is None or job.status != JobStatus.QUEUED.value:
+            return  # cancelled, already running/completed: duplicate delivery no-op
+        claimed = claim_job_row(db, job.id)
+        if claimed is None:
             return
         try:
-            from app.intelligence.crawler import CrawlPolicy, ResponsibleCrawler
-            from app.observability.metrics import Timer, inc
-
             crawler = ResponsibleCrawler(CrawlPolicy(
                 max_pages=20, max_depth=1, delay_seconds=0.5,
                 allow_private_addresses=settings.crawler_allow_private_addresses,
             ))
             try:
                 with Timer("research_job_duration_seconds"):
+                    from app.services.intelligence import run_investigation
+
                     run_investigation(db, claimed, crawler=crawler)
             finally:
                 crawler.close()
             transition(db, claimed, JobStatus.COMPLETED)
             inc("research_jobs_total", outcome="completed")
-        except Exception as exc:  # noqa: BLE001 - record and requeue per policy
-            from app.observability.metrics import inc
-
+        except Exception as exc:  # noqa: BLE001 - failures must be recorded
+            logger.warning("Research job %s failed: %s", job_id, exc)
             inc("research_jobs_total", outcome="failed")
-            try:
-                logger.warning("Embedded worker failed job %s: %s", job_id, exc)
-                transaction = db.get_transaction()
-                if transaction is not None and transaction.is_active:
-                    db.rollback()
-            except Exception:  # noqa: BLE001 - DB may already be gone
-                return
+            db.rollback()
             fresh = db.get(ResearchJob, job_id)
             if fresh is not None:
                 record_failure(db, fresh, str(exc))
@@ -115,15 +105,15 @@ def _execute(job_id: int) -> None:
         db.close()
 
 
+def claim_job_row(db: Session, job_id: int):
+    """Atomically move a QUEUED row to RUNNING via the guarded UPDATE."""
+    from app.jobs.queue import claim_next
+
+    return claim_next(db, worker_id=f"queue:{job_id}")
+
+
 def recover_stale_jobs(db: Session) -> int:
-    """Requeue RUNNING rows orphaned by a crashed API process at startup.
-
-    Rows whose heartbeat/started_at is far in the past exceeded their
-    recovery window and are marked FAILED instead of looping forever.
-    """
-    from datetime import timedelta
-
-    cutoff = utcnow() - timedelta(minutes=30)
+    """Requeue RUNNING rows orphaned by a crashed API/worker at startup."""
     stuck = list(
         db.execute(
             select(ResearchJob).where(
@@ -137,15 +127,16 @@ def recover_stale_jobs(db: Session) -> int:
             continue
         started = job.started_at
         if started is not None:
+            from datetime import timedelta
+
             from app.db.models import as_utc
 
-            if as_utc(started) < cutoff:
+            if as_utc(started) < utcnow() - timedelta(minutes=30):
                 job.status = JobStatus.FAILED.value
                 job.stage = "failed"
                 job.error = "Job was interrupted and exceeded its recovery window"
                 job.completed_at = utcnow()
                 continue
-        # No live worker can hold it: the pool was in this process.
         job.status = JobStatus.QUEUED.value
         job.stage = "recovering after restart"
         job.worker_id = None
@@ -154,8 +145,25 @@ def recover_stale_jobs(db: Session) -> int:
         db.commit()
     if recovered:
         logger.info("Recovered %d research job(s) after restart", recovered)
-    if settings.embedded_worker:
+        # Re-deliver through the transport so any worker picks them up.
         for job in stuck:
             if job.status == JobStatus.QUEUED.value:
-                _get_executor().submit(_execute, job.id)
+                try:
+                    get_backend().enqueue(JOB_TYPE, {"job_id": job.id},
+                                          job_id=f"job-{job.id}-retry")
+                except Exception:  # noqa: BLE001 - queue down: DB recovery persists
+                    logger.warning("Could not re-enqueue recovered job %s", job.id)
     return recovered
+
+
+def _handle_research(payload: dict) -> None:
+    """Transport handler: executes one queued research job."""
+    execute_job(int(payload["job_id"]))
+
+
+register_handler(JOB_TYPE, _handle_research)
+
+
+def shutdown() -> None:
+    """Retained for API lifecycle symmetry; the ThreadPool path is gone."""
+    return None

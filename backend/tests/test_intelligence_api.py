@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from datetime import timedelta
 
 import pytest
@@ -30,20 +29,7 @@ def manager_headers(client, db):
     return {"Authorization": f"Bearer {login.json()['access_token']}"}, org
 
 
-def _drain() -> None:
-    """Wait briefly for embedded-worker jobs to finish (deterministic tests)."""
-    import time
 
-    from app.services.intelligence_jobs import _get_executor  # noqa: SLF001
-
-    executor = _get_executor()
-    for _ in range(200):
-        if executor._work_queue.empty() and all(  # noqa: SLF001
-            not t.is_alive() or t is threading.current_thread()
-            for t in executor._threads  # noqa: SLF001
-        ):
-            return
-        time.sleep(0.05)
 
 
 def test_tools_include_market_research(client):
@@ -64,7 +50,6 @@ def test_startup_recovery_requeues_orphaned_jobs(client, db):
 
     recovered = recover_stale_jobs(db)
     assert recovered == 1
-    _drain()
     db.expire_all()
     refreshed = db.get(ResearchJob, orphan.id)
     assert refreshed.status in {"QUEUED", "COMPLETED", "FAILED"}
@@ -83,7 +68,6 @@ def test_startup_recovery_fails_permanently_stale_jobs(client, db):
     db.commit()
 
     recover_stale_jobs(db)
-    _drain()
     db.expire_all()
     refreshed = db.get(ResearchJob, stale.id)
     assert refreshed.status == "FAILED"

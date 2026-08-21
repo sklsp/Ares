@@ -47,9 +47,15 @@ export default function Home() {
     if (!authLoading && !user) router.replace("/login");
   }, [authLoading, user, router]);
 
-  // Fetching external data on mount and when the search filter changes is the effect's purpose.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void load(); }, [load]);
+  // Fetch only once the restored session is available: firing earlier would
+  // 401 on refresh and wipe a perfectly valid stored session. The setState
+  // happens asynchronously inside load(), not synchronously in the effect body.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (authLoading || !user) return;
+    void load();
+  }, [load, authLoading, user]);
+  /* eslint-enable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!jobs.some((job) => job.status === "QUEUED" || job.status === "RUNNING")) return;
     const timer = window.setInterval(() => { void load(); }, 2000);

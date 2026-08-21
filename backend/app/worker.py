@@ -1,13 +1,13 @@
-"""Standalone research worker.
+"""Standalone Redis queue worker.
 
-Runs against the same database as the API, so a job submitted by any
-process is executed here. Multiple workers can run concurrently; claiming
-is atomic (UPDATE ... WHERE status=QUEUED), so a job runs exactly once.
+Claims jobs from the transport, executes registered handlers, and handles
+the failure ladder: retry with exponential backoff, then dead-letter.
+Multiple workers can run concurrently; claim() is atomic so a job is
+delivered to exactly one worker at a time (at-least-once across crashes).
 
-Local development does not need this process: the API runs an embedded
-worker by default (`EMBEDDED_WORKER=true`, the default). Production runs
-`python -m app.worker` in one or more replicas with `EMBEDDED_WORKER=false`
-on the API.
+Local development does not need this process: with no REDIS_URL the API
+uses the inline backend. Production runs `python -m app.worker` replicas
+with REDIS_URL set.
 """
 
 from __future__ import annotations
@@ -18,25 +18,21 @@ import socket
 import sys
 import time
 import uuid
-from datetime import timedelta
-
-from sqlalchemy import select
 
 from app.config import settings
-from app.db.base import SessionLocal
-from app.db.models import ResearchJob, utcnow
-from app.intelligence.crawler import CrawlPolicy, ResponsibleCrawler
-from app.jobs import JobStatus
-from app.jobs.queue import claim_next, due_jobs, record_failure, transition
+from app.jobs.transport import get_backend, get_handler
 from app.logging_config import configure_logging, get_logger
-from app.services.intelligence import run_investigation
+from app.observability.metrics import inc, observe
 
 logger = get_logger(__name__)
 
-POLL_SECONDS = 2.0
-HEARTBEAT_SECONDS = 15.0
-# A RUNNING job whose heartbeat is older than this was orphaned by a crash.
-STALE_THRESHOLD = timedelta(minutes=10)
+POLL_TIMEOUT_SECONDS = 1.0
+RECLAIM_INTERVAL_SECONDS = 30.0
+STALE_PROCESSING_SECONDS = 300.0
+# Exponential backoff for retries (seconds): 5, 15, 45 — capped.
+BACKOFF_BASE_SECONDS = 5.0
+BACKOFF_CAP_SECONDS = 600.0
+MAX_ATTEMPTS = 3
 
 
 class Worker:
@@ -45,91 +41,66 @@ class Worker:
         self._stop = False
         self.processed = 0
         self.failed = 0
-        self.started_at = time.monotonic()
 
     def request_stop(self, *_: object) -> None:
         logger.info("Shutdown requested; finishing current job")
         self._stop = True
 
-    # -- lifecycle -------------------------------------------------------
     def run(self) -> int:
         configure_logging(settings.log_level)
-        logger.info("Worker %s starting", self.worker_id)
+        logger.info("Worker %s starting (redis=%s)", self.worker_id,
+                    bool(settings.redis_url))
         signal.signal(signal.SIGINT, self.request_stop)
         signal.signal(signal.SIGTERM, self.request_stop)
-        last_heartbeat = 0.0
+        backend = get_backend()
+        last_reclaim = 0.0
         while not self._stop:
             now = time.monotonic()
-            if now - last_heartbeat >= HEARTBEAT_SECONDS:
-                self._reclaim_stale()
-                last_heartbeat = now
-            worked = self._work_once()
-            if not worked:
-                time.sleep(POLL_SECONDS)
-        logger.info(
-            "Worker %s stopped: processed=%d failed=%d uptime=%.0fs",
-            self.worker_id, self.processed, self.failed,
-            time.monotonic() - self.started_at,
-        )
+            if now - last_reclaim >= RECLAIM_INTERVAL_SECONDS:
+                reclaimed = backend.reclaim_stale(STALE_PROCESSING_SECONDS)
+                if reclaimed:
+                    logger.warning("Reclaimed %d abandoned job(s)", reclaimed)
+                last_reclaim = now
+            if not self._work_once(backend):
+                time.sleep(0.2)
+        logger.info("Worker %s stopped: processed=%d failed=%d",
+                    self.worker_id, self.processed, self.failed)
         return 0
 
-    # -- core loop -------------------------------------------------------
-    def _work_once(self) -> bool:
-        db = SessionLocal()
+    def _work_once(self, backend) -> bool:
+        entry = backend.claim(self.worker_id, timeout_seconds=POLL_TIMEOUT_SECONDS)
+        if entry is None:
+            return False
+        entry["worker_id"] = self.worker_id
+        started = time.monotonic()
+        handler = get_handler(entry.get("type", ""))
         try:
-            job = due_jobs(db, limit=1)
-            if not job:
-                return False
-            claimed = claim_next(db, self.worker_id)
-            if claimed is None or claimed.id != job[0].id:
-                return bool(claimed)
-            started = time.monotonic()
-            try:
-                crawler = ResponsibleCrawler(CrawlPolicy(
-                    max_pages=20, max_depth=1, delay_seconds=0.5,
-                    allow_private_addresses=settings.crawler_allow_private_addresses,
-                ))
-                try:
-                    run_investigation(db, claimed, crawler=crawler)
-                finally:
-                    crawler.close()
-                transition(db, claimed, JobStatus.COMPLETED)
-                self.processed += 1
-                logger.info("Job %s completed in %.1fs", claimed.id, time.monotonic() - started)
-            except Exception as exc:  # noqa: BLE001 - failures must not kill the worker
-                logger.exception("Job %s failed", claimed.id)
-                db.rollback()
-                fresh = db.get(ResearchJob, claimed.id)
-                if fresh is not None:
-                    record_failure(db, fresh, str(exc))
-                self.failed += 1
-            return True
-        finally:
-            db.close()
-
-    def _reclaim_stale(self) -> None:
-        """Requeue RUNNING jobs whose worker died mid-flight."""
-        db = SessionLocal()
-        try:
-            cutoff = utcnow() - STALE_THRESHOLD
-            stale = db.execute(
-                select(ResearchJob).where(
-                    ResearchJob.status == JobStatus.RUNNING.value,
-                    ResearchJob.started_at < cutoff,
-                )
-            ).scalars().all()
-            for job in stale:
-                logger.warning("Reclaiming stale job %s from worker %s",
-                               job.id, job.worker_id)
-                job.status = JobStatus.QUEUED.value
-                job.stage = "reclaimed after worker loss"
-                job.worker_id = None
-            db.commit()
-        except Exception:  # noqa: BLE001
-            logger.exception("Stale reclaim failed")
-            db.rollback()
-        finally:
-            db.close()
+            if handler is None:
+                raise RuntimeError(f"No handler registered for job type {entry.get('type')!r}")
+            handler(entry.get("payload", {}))
+            backend.complete(entry)
+            self.processed += 1
+            inc("worker_jobs_total", outcome="completed")
+            observe("worker_job_duration_seconds", time.monotonic() - started)
+            logger.info("Job %s completed in %.1fs", entry.get("id"),
+                        time.monotonic() - started)
+        except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker
+            self.failed += 1
+            inc("worker_jobs_total", outcome="failed")
+            logger.exception("Job %s failed", entry.get("id"))
+            retry_count = int(entry.get("retry_count", 0)) + 1
+            if retry_count >= MAX_ATTEMPTS:
+                logger.error("Job %s moved to dead letter after %d attempts",
+                             entry.get("id"), retry_count)
+                backend.dead_letter(entry, str(exc))
+            else:
+                delay = min(BACKOFF_BASE_SECONDS * (3 ** (retry_count - 1)),
+                            BACKOFF_CAP_SECONDS)
+                logger.warning("Requeueing job %s (attempt %d) in %.0fs",
+                               entry.get("id"), retry_count, delay)
+                entry["retry_count"] = retry_count
+                backend.requeue(entry, delay_seconds=delay)
+        return True
 
 
 def main() -> int:
