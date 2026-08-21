@@ -12,7 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app import __version__
 from app.agent import runner
-from app.api import agent, analytics, approvals, health, products
+from app.api import agent, analytics, approvals, health, intelligence, products
 from app.config import settings
 from app.integrations.base import ProductNotFoundError, ProviderError
 from app.logging_config import configure_logging, get_logger
@@ -69,6 +69,7 @@ def create_app() -> FastAPI:
         approvals.router,
         products.router,
         analytics.router,
+        intelligence.router,
     ):
         app.include_router(router)
 

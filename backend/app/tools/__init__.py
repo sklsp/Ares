@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from app.tools import agent_tools, analytics, content, inventory, products
+from app.tools import agent_tools, analytics, content, intelligence, inventory, products
 from app.tools.registry import (
     Tool,
     ToolAccess,
@@ -15,7 +15,7 @@ from app.tools.registry import (
     ToolValidationError,
 )
 
-MODULES = (products, inventory, analytics, content, agent_tools)
+MODULES = (products, inventory, analytics, content, intelligence, agent_tools)
 
 
 def build_registry() -> ToolRegistry:

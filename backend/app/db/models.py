@@ -238,6 +238,149 @@ class ApprovalRequest(Base):
     run: Mapped[AgentRun] = relationship(back_populates="approvals")
 
 
+# --------------------------------------------------------------------------
+# Market intelligence
+# --------------------------------------------------------------------------
+class ResearchJobStatus(StrEnum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class OpportunityStatus(StrEnum):
+    NEW = "NEW"
+    REVIEWED = "REVIEWED"
+    DISMISSED = "DISMISSED"
+    ACTIONED = "ACTIONED"
+
+
+class ExternalStore(Base):
+    __tablename__ = "external_stores"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    domain: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    niche: Mapped[str] = mapped_column(String(160), default="")
+    platform: Mapped[str] = mapped_column(String(40), default="unknown")
+    country: Mapped[str] = mapped_column(String(8), default="")
+    product_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    store_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONType, default=dict
+    )
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_crawled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    crawl_status: Mapped[str] = mapped_column(String(24), default="discovered")
+
+    products: Mapped[list["ExternalProduct"]] = relationship(
+        back_populates="store", cascade="all, delete-orphan"
+    )
+
+
+class ExternalProduct(Base):
+    __tablename__ = "external_products"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("external_stores.id", ondelete="CASCADE"), index=True)
+    source_url: Mapped[str] = mapped_column(Text, unique=True)
+    name: Mapped[str] = mapped_column(String(255))
+    normalized_name: Mapped[str] = mapped_column(String(255), index=True)
+    brand: Mapped[str] = mapped_column(String(160), default="")
+    category: Mapped[str] = mapped_column(String(160), default="")
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    currency: Mapped[str] = mapped_column(String(8), default="")
+    availability: Mapped[str] = mapped_column(String(40), default="unknown")
+    description: Mapped[str] = mapped_column(Text, default="")
+    image_url: Mapped[str] = mapped_column(Text, default="")
+    attributes: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    store: Mapped[ExternalStore] = relationship(back_populates="products")
+    snapshots: Mapped[list["ProductSnapshot"]] = relationship(
+        back_populates="product", cascade="all, delete-orphan"
+    )
+
+
+class ProductSnapshot(Base):
+    __tablename__ = "product_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    external_product_id: Mapped[int] = mapped_column(
+        ForeignKey("external_products.id", ondelete="CASCADE"), index=True
+    )
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    availability: Mapped[str] = mapped_column(String(40), default="unknown")
+    review_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    product: Mapped[ExternalProduct] = relationship(back_populates="snapshots")
+
+
+class ResearchJob(Base):
+    __tablename__ = "research_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    objective: Mapped[str] = mapped_column(Text)
+    query: Mapped[str] = mapped_column(String(255), index=True)
+    status: Mapped[str] = mapped_column(String(24), default=ResearchJobStatus.QUEUED.value, index=True)
+    stage: Mapped[str] = mapped_column(String(80), default="queued")
+    stats: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONType, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    opportunities: Mapped[list["Opportunity"]] = relationship(
+        back_populates="job", cascade="all, delete-orphan"
+    )
+
+
+class Opportunity(Base):
+    __tablename__ = "opportunities"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    research_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("research_jobs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    type: Mapped[str] = mapped_column(String(40), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    recommended_action: Mapped[str] = mapped_column(Text, default="")
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    source_urls: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    competition_level: Mapped[str] = mapped_column(String(24), default="unknown")
+    demand_signals: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    status: Mapped[str] = mapped_column(String(24), default=OpportunityStatus.NEW.value, index=True)
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    last_verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    job: Mapped[ResearchJob | None] = relationship(back_populates="opportunities")
+
+
+class OpportunityEvidence(Base):
+    __tablename__ = "opportunity_evidence"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    opportunity_id: Mapped[int] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
+    )
+    source_url: Mapped[str] = mapped_column(Text)
+    source_domain: Mapped[str] = mapped_column(String(255), index=True)
+    claim: Mapped[str] = mapped_column(Text)
+    extraction_method: Mapped[str] = mapped_column(String(80), default="structured")
+    observed_value: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 __all__ = [
     "AgentRun",
     "AgentStep",
@@ -251,4 +394,12 @@ __all__ = [
     "StepType",
     "as_utc",
     "utcnow",
+    "ExternalStore",
+    "ExternalProduct",
+    "ProductSnapshot",
+    "ResearchJob",
+    "ResearchJobStatus",
+    "Opportunity",
+    "OpportunityEvidence",
+    "OpportunityStatus",
 ]
