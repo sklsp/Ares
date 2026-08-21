@@ -1,121 +1,146 @@
-"""Persistent research job scheduling with crash recovery.
+"""Research job scheduling on the durable queue.
 
-Jobs are durable rows. If the process dies mid-run, a job can be left in
-RUNNING forever; `recover_stale_jobs` requeues those rows on startup so a
-restart heals interrupted work instead of leaking stuck state.
+The API only enqueues; execution happens in the embedded worker (local
+development default) or in standalone `python -m app.worker` processes
+(production). Both claim jobs atomically from the same table.
 """
 
 from __future__ import annotations
 
+import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.base import SessionLocal
-from app.db.models import ResearchJob, ResearchJobStatus, as_utc, utcnow
+from app.db.models import ResearchJob, utcnow
+from app.jobs import JobStatus
+from app.jobs.queue import claim_next, due_jobs, enqueue, record_failure, transition
 from app.logging_config import get_logger
 from app.services.intelligence import run_investigation
 
 logger = get_logger(__name__)
 
-_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="research")
-_inflight: set[int] = set()
-
-# A RUNNING row older than this is considered orphaned by a crashed worker.
-STALE_RUNNING_THRESHOLD = timedelta(minutes=30)
+_executor: ThreadPoolExecutor | None = None
+_executor_lock = threading.Lock()
 
 
-def create_job(db: Session, objective: str, query: str, start_urls: list[str] | None = None) -> ResearchJob:
-    job = ResearchJob(objective=objective, query=query, stats={"domains_discovered": 0, "pages_discovered": 0, "pages_crawled": 0, "products_discovered": 0, "opportunities_found": 0})
-    db.add(job); db.commit(); db.refresh(job)
-    _submit(job.id, start_urls or [])
+def _get_executor() -> ThreadPoolExecutor:
+    global _executor
+    with _executor_lock:
+        if _executor is None or _executor._shutdown:  # noqa: SLF001 - recreate after shutdown
+            _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="research")
+        return _executor
+
+
+def shutdown() -> None:
+    with _executor_lock:
+        if _executor is not None:
+            _executor.shutdown(wait=False, cancel_futures=True)
+            _executor = None
+
+
+def create_job(
+    db: Session,
+    objective: str,
+    query: str,
+    start_urls: list[str] | None = None,
+    *,
+    priority: int = 5,
+) -> tuple[ResearchJob, bool]:
+    """Enqueue a research job. Returns (job, created)."""
+    job, created = enqueue(
+        db, objective=objective, query=query, start_urls=start_urls,
+        priority=priority,
+    )
+    if created and settings.embedded_worker:
+        _get_executor().submit(_execute, job.id)
+    return job, created
+
+
+def cancel_job(db: Session, job: ResearchJob) -> ResearchJob:
+    if job.status in {JobStatus.QUEUED.value, JobStatus.RUNNING.value}:
+        transition(db, job, JobStatus.CANCELLED)
+        db.refresh(job)
     return job
 
 
-def _submit(job_id: int, start_urls: list[str]) -> None:
-    """Track in-flight jobs so shutdown can drain them deterministically."""
-    _inflight.add(job_id)
-
-    def _done(_future) -> None:
-        _inflight.discard(job_id)
-
-    _executor.submit(_run, job_id, start_urls).add_done_callback(_done)
-
-
-def _run(job_id: int, start_urls: list[str]) -> None:
+# -- embedded worker -----------------------------------------------------
+def _execute(job_id: int) -> None:
+    """Claim and run one job. Safe to run concurrently across processes."""
     db = SessionLocal()
     try:
-        job = db.get(ResearchJob, job_id)
-        if job is None or job.status == ResearchJobStatus.CANCELLED.value:
+        pending = due_jobs(db, limit=1)
+        if not any(j.id == job_id for j in pending):
+            return  # claimed elsewhere, cancelled, or not yet due
+        claimed = claim_next(db, worker_id=f"embedded:{id(_get_executor())}")
+        if claimed is None or claimed.id != job_id:
             return
-        run_investigation(db, job, start_urls=start_urls or None)
-    except Exception:  # noqa: BLE001 - a worker must never die silently
-        logger.exception("Research worker failed for job %s", job_id)
         try:
+            from app.intelligence.crawler import CrawlPolicy, ResponsibleCrawler
+
+            crawler = ResponsibleCrawler(CrawlPolicy(
+                max_pages=20, max_depth=1, delay_seconds=0.5,
+                allow_private_addresses=settings.crawler_allow_private_addresses,
+            ))
+            try:
+                run_investigation(db, claimed, crawler=crawler)
+            finally:
+                crawler.close()
+            transition(db, claimed, JobStatus.COMPLETED)
+        except Exception as exc:  # noqa: BLE001 - record and requeue per policy
+            logger.exception("Embedded worker failed job %s", job_id)
             db.rollback()
-        except Exception:  # noqa: BLE001 - rollback must not mask the original failure
-            logger.exception("Rollback failed for job %s", job_id)
+            fresh = db.get(ResearchJob, job_id)
+            if fresh is not None:
+                record_failure(db, fresh, str(exc))
     finally:
         db.close()
 
 
 def recover_stale_jobs(db: Session) -> int:
-    """Requeue jobs orphaned by a crash and fail permanently-stuck ones.
+    """Requeue RUNNING rows orphaned by a crashed API process at startup.
 
-    Called at API startup. QUEUED/RUNNING rows found after a restart cannot
-    have a live worker (the pool is in-process), so they are resubmitted once;
-    if a recovered row goes stale again it is marked FAILED instead of looping.
+    Rows whose heartbeat/started_at is far in the past exceeded their
+    recovery window and are marked FAILED instead of looping forever.
     """
-    cutoff = utcnow() - STALE_RUNNING_THRESHOLD
+    from datetime import timedelta
+
+    cutoff = utcnow() - timedelta(minutes=30)
     stuck = list(
         db.execute(
             select(ResearchJob).where(
-                ResearchJob.status.in_(
-                    [ResearchJobStatus.QUEUED.value, ResearchJobStatus.RUNNING.value]
-                )
+                ResearchJob.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value])
             )
         ).scalars().all()
     )
     recovered = 0
     for job in stuck:
-        started = as_utc(job.started_at) if job.started_at is not None else None
-        if started is not None and started < cutoff:
-            # Was already running before an earlier recovery attempt: give up.
-            job.status = ResearchJobStatus.FAILED.value
-            job.stage = "failed"
-            job.error = "Job was interrupted and exceeded its recovery window"
-            job.completed_at = utcnow()
-            logger.warning("Marked stale research job %s as FAILED", job.id)
+        if job.status != JobStatus.RUNNING.value:
             continue
-        job.status = ResearchJobStatus.QUEUED.value
+        started = job.started_at
+        if started is not None:
+            from app.db.models import as_utc
+
+            if as_utc(started) < cutoff:
+                job.status = JobStatus.FAILED.value
+                job.stage = "failed"
+                job.error = "Job was interrupted and exceeded its recovery window"
+                job.completed_at = utcnow()
+                continue
+        # No live worker can hold it: the pool was in this process.
+        job.status = JobStatus.QUEUED.value
         job.stage = "recovering after restart"
-        job.error = None
+        job.worker_id = None
         recovered += 1
-        _submit(job.id, [])
-    db.commit()
+    if recovered or any(j.status == JobStatus.FAILED.value for j in stuck):
+        db.commit()
     if recovered:
         logger.info("Recovered %d research job(s) after restart", recovered)
+    if settings.embedded_worker:
+        for job in stuck:
+            if job.status == JobStatus.QUEUED.value:
+                _get_executor().submit(_execute, job.id)
     return recovered
-
-
-def cancel_job(db: Session, job: ResearchJob) -> ResearchJob:
-    if job.status in {ResearchJobStatus.QUEUED.value, ResearchJobStatus.RUNNING.value}:
-        job.status = ResearchJobStatus.CANCELLED.value
-        job.stage = "cancelled"
-        db.commit(); db.refresh(job)
-    return job
-
-
-def wait_for_jobs(timeout: float | None = None) -> bool:
-    """Block until no research jobs are in flight. Used by tests and shutdown."""
-    import time
-
-    deadline = None if timeout is None else time.monotonic() + timeout
-    while _inflight:
-        if deadline is not None and time.monotonic() > deadline:
-            return False
-        time.sleep(0.05)
-    return True

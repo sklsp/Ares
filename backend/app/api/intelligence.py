@@ -16,7 +16,8 @@ router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 
 @router.post("/jobs", response_model=ResearchJobOut, status_code=status.HTTP_202_ACCEPTED)
 def start_job(payload: ResearchJobRequest, db: DbSession) -> ResearchJob:
-    return create_job(db, payload.objective, payload.query, payload.start_urls)
+    job, _created = create_job(db, payload.objective, payload.query, payload.start_urls)
+    return job
 
 
 @router.get("/jobs", response_model=list[ResearchJobOut])

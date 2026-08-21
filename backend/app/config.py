@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     # explicitly enabled for local development fixtures.
     crawler_allow_private_addresses: bool = False
 
+    # --- Background jobs -------------------------------------------------
+    # Local development: the API runs an embedded worker. Production: run
+    # `python -m app.worker` replicas and set EMBEDDED_WORKER=false here.
+    embedded_worker: bool = True
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

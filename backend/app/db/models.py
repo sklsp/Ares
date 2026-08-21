@@ -332,6 +332,12 @@ class ResearchJob(Base):
     stats: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONType, nullable=True)
+    # Durable queue fields (multi-process workers).
+    priority: Mapped[int] = mapped_column(Integer, default=5, index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    run_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
