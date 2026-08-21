@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # --- HTTP -----------------------------------------------------------
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     log_level: str = "INFO"
+    # When set, every API request must present this value in X-API-Key.
+    # Leave empty for open local development.
+    api_key: str | None = None
+
+    # --- Intelligence crawling ------------------------------------------
+    # SSRF guard: private/loopback destinations are blocked unless this is
+    # explicitly enabled for local development fixtures.
+    crawler_allow_private_addresses: bool = False
 
     @property
     def cors_origin_list(self) -> list[str]:

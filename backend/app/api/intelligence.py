@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.deps import DbSession
 from app.db.models import ExternalProduct, ExternalStore, Opportunity, OpportunityEvidence, ResearchJob
@@ -45,6 +45,14 @@ def list_stores(db: DbSession, limit: int = Query(default=50, ge=1, le=200)) -> 
     stores = db.execute(
         select(ExternalStore).order_by(ExternalStore.last_crawled_at.desc()).limit(limit)
     ).scalars().all()
+    # One grouped query instead of one COUNT per store (avoids N+1).
+    counts = dict(
+        db.execute(
+            select(ExternalProduct.store_id, func.count(ExternalProduct.id)).group_by(
+                ExternalProduct.store_id
+            )
+        ).all()
+    )
     return [
         {
             "id": store.id,
@@ -54,7 +62,7 @@ def list_stores(db: DbSession, limit: int = Query(default=50, ge=1, le=200)) -> 
             "platform": store.platform,
             "country": store.country,
             "crawl_status": store.crawl_status,
-            "product_count": db.query(ExternalProduct).filter(ExternalProduct.store_id == store.id).count(),
+            "product_count": counts.get(store.id, 0),
             "last_crawled_at": store.last_crawled_at,
         }
         for store in stores

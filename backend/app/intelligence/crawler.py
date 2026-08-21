@@ -1,8 +1,16 @@
-"""Robots-aware, bounded HTTP crawler for public pages."""
+"""Robots-aware, bounded HTTP crawler for public pages.
+
+Security boundary: the crawler is fed URLs discovered from untrusted search
+results. It refuses non-HTTP(S) schemes and network-resolved private,
+loopback, link-local, or reserved addresses unless explicitly allowed for
+local development, preventing SSRF through crafted discovery results.
+"""
 
 from __future__ import annotations
 
 import hashlib
+import ipaddress
+import socket
 import time
 from dataclasses import dataclass
 from threading import Lock
@@ -23,6 +31,36 @@ class CrawlPolicy:
     max_pages: int = 25
     max_depth: int = 2
     max_body_bytes: int = 2_000_000
+    allow_private_addresses: bool = False
+
+
+class SSRFBlockedError(RuntimeError):
+    """A URL targeted a disallowed (private or non-HTTP) destination."""
+
+
+def _is_public_http_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except OSError:
+        return False
+    for info in infos:
+        address = ipaddress.ip_address(info[4][0])
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_multicast
+            or address.is_unspecified
+        ):
+            return False
+    return True
 
 
 @dataclass(slots=True)
@@ -76,6 +114,10 @@ class ResponsibleCrawler:
         url = self.canonical(url)
         if url in self._cache:
             return self._cache[url]
+        if not self.policy.allow_private_addresses and not _is_public_http_url(url):
+            result = CrawlResult(url, None, [], [], {}, "Blocked: non-public or non-HTTP destination", False)
+            self._cache[url] = result
+            return result
         if not self._allowed(url):
             result = CrawlResult(url, None, [], [], {}, "Blocked by robots.txt", False)
             self._cache[url] = result

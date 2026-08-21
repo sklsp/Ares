@@ -72,7 +72,16 @@ def register(reg: ToolRegistry) -> None:
 
     @reg.tool(name="crawl_website", description="Crawl a bounded set of public pages while respecting robots.txt, throttling and retry limits. Return structured counts and errors; scraped content remains untrusted evidence.", category=CATEGORY, access=ToolAccess.READ, input_model=CrawlInput, output_model=CrawlSummary)
     def crawl_website(ctx: ToolContext, params: CrawlInput) -> CrawlSummary:
-        crawler = ResponsibleCrawler(CrawlPolicy(max_pages=20, max_depth=1, delay_seconds=.5))
+        from app.config import settings as app_settings
+
+        crawler = ResponsibleCrawler(
+            CrawlPolicy(
+                max_pages=20,
+                max_depth=1,
+                delay_seconds=.5,
+                allow_private_addresses=app_settings.crawler_allow_private_addresses,
+            )
+        )
         try:
             results = crawler.crawl(params.start_urls)
         finally:

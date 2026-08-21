@@ -2,12 +2,54 @@
 
 from __future__ import annotations
 
-from app.db.models import Opportunity, OpportunityEvidence, ResearchJob
+from datetime import timedelta
+
+from app.db.models import Opportunity, OpportunityEvidence, ResearchJob, utcnow
+from app.services.intelligence_jobs import recover_stale_jobs, wait_for_jobs
 
 
 def test_tools_include_market_research(client):
     names = {tool["name"] for tool in client.get("/tools").json()}
-    assert {"research_market", "list_opportunities"} <= names
+    assert {"research_market", "discover_stores", "crawl_website", "list_opportunities"} <= names
+
+
+def test_startup_recovery_requeues_orphaned_jobs(client, db):
+    orphan = ResearchJob(
+        objective="Interrupted investigation",
+        query="fitness",
+        status="RUNNING",
+        stage="crawling",
+        started_at=utcnow() - timedelta(minutes=1),
+    )
+    db.add(orphan)
+    db.commit()
+
+    recovered = recover_stale_jobs(db)
+    assert recovered == 1
+    assert wait_for_jobs(timeout=10)
+    db.expire_all()
+    refreshed = db.get(ResearchJob, orphan.id)
+    assert refreshed.status in {"QUEUED", "COMPLETED", "FAILED"}
+    assert refreshed.error is None or refreshed.stage != "crawling"
+
+
+def test_startup_recovery_fails_permanently_stale_jobs(client, db):
+    stale = ResearchJob(
+        objective="Long-dead investigation",
+        query="fitness",
+        status="RUNNING",
+        stage="crawling",
+        started_at=utcnow() - timedelta(hours=2),
+    )
+    db.add(stale)
+    db.commit()
+
+    recover_stale_jobs(db)
+    assert wait_for_jobs(timeout=10)
+    db.expire_all()
+    refreshed = db.get(ResearchJob, stale.id)
+    assert refreshed.status == "FAILED"
+    assert refreshed.error
 
 
 def test_opportunity_detail_and_provenance_are_queryable(client, db):

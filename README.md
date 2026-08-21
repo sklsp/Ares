@@ -337,9 +337,15 @@ Open <http://localhost:3000>.
 | `AGENT_TIMEOUT_SECONDS` | `240` | Wall-clock budget per run |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma separated |
 | `LOG_LEVEL` | `INFO` | |
+| `API_KEY` | — | When set, every request needs a matching `X-API-Key` header. Leave empty for local dev; set in production. |
+| `CRAWLER_ALLOW_PRIVATE_ADDRESSES` | `false` | SSRF guard: block private/loopback crawl targets unless explicitly enabled for fixtures. |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Frontend → API (build-time in Docker) |
 
 No secrets are committed. `.env` files are gitignored; see `.env.example` for the shape.
+
+### Reliability
+
+Research jobs are durable rows. If the backend restarts while a job is queued or running, startup recovery resubmits it automatically; jobs exceeding the recovery window are marked `FAILED` with a clear error instead of staying stuck in `RUNNING`.
 
 ---
 

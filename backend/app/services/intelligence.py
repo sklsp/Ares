@@ -70,8 +70,17 @@ def _opportunity(db: Session, job: ResearchJob, kind: str, title: str, summary: 
 
 
 def run_investigation(db: Session, job: ResearchJob, *, start_urls: list[str] | None = None, search: SearchProvider | None = None, crawler: ResponsibleCrawler | None = None) -> dict[str, int]:
+    from app.config import settings as app_settings
+
     search = search or DuckDuckGoProvider()
-    crawler = crawler or ResponsibleCrawler(CrawlPolicy(max_pages=20, max_depth=1, delay_seconds=0.5))
+    crawler = crawler or ResponsibleCrawler(
+        CrawlPolicy(
+            max_pages=20,
+            max_depth=1,
+            delay_seconds=0.5,
+            allow_private_addresses=app_settings.crawler_allow_private_addresses,
+        )
+    )
     try:
         job.status = "RUNNING"; job.stage = "discovering sources"; job.started_at = utcnow(); db.commit()
         urls = list(dict.fromkeys(start_urls or search.search(job.query, limit=8)))

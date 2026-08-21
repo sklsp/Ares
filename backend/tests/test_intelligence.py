@@ -58,10 +58,60 @@ def test_crawler_blocks_disallowed_robots():
                 text = "User-agent: *\nDisallow: /"
             return Response()
 
-    crawler = ResponsibleCrawler(CrawlPolicy(delay_seconds=0), client=Client())
+    # Opt past the SSRF gate; this test targets robots handling specifically.
+    crawler = ResponsibleCrawler(
+        CrawlPolicy(delay_seconds=0, allow_private_addresses=True), client=Client()
+    )
     result = crawler.fetch("https://blocked.example/product")
     assert result.robots_allowed is False
     assert result.error == "Blocked by robots.txt"
+
+
+def test_crawler_blocks_private_and_non_http_destinations():
+    class Client:
+        def get(self, url):  # pragma: no cover - must never be reached
+            raise AssertionError("crawler attempted a disallowed destination")
+
+    crawler = ResponsibleCrawler(CrawlPolicy(delay_seconds=0), client=Client())
+    for url in (
+        "http://127.0.0.1:8765/secret",
+        "http://169.254.169.254/latest/meta-data",
+        "http://10.0.0.5/internal",
+        "file:///etc/passwd",
+        "ftp://example.invalid/file",
+    ):
+        result = crawler.fetch(url)
+        assert result.error and "Blocked" in result.error, url
+        assert result.status_code is None
+
+
+def test_crawler_allows_private_destinations_only_when_opted_in():
+    class Client:
+        def __init__(self) -> None:
+            self.requested: list[str] = []
+
+        def get(self, url):
+            self.requested.append(url)
+
+            class Response:
+                status_code = 200
+                text = "User-agent: *\nAllow: /"
+                content = b"<html><head><title>ok</title></head></html>"
+                encoding = "utf-8"
+                url = "http://127.0.0.1:8765/fixture.html"
+
+                def raise_for_status(self) -> None:
+                    return None
+
+            return Response()
+
+    client = Client()
+    crawler = ResponsibleCrawler(
+        CrawlPolicy(delay_seconds=0, allow_private_addresses=True), client=client
+    )
+    result = crawler.fetch("http://127.0.0.1:8765/fixture.html")
+    assert result.error is None
+    assert result.robots_allowed is True
 
 
 def test_investigation_persists_evidence_and_assortment_gap(db):

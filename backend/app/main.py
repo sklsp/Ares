@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -42,6 +42,16 @@ async def lifespan(_: FastAPI):
         settings.llm_provider,
         settings.database_url.split("@")[-1],
     )
+    from app.db.base import SessionLocal
+    from app.services.intelligence_jobs import recover_stale_jobs
+
+    db = SessionLocal()
+    try:
+        recovered = recover_stale_jobs(db)
+        if recovered:
+            logger.info("Resubmitted %d interrupted research job(s)", recovered)
+    finally:
+        db.close()
     yield
     runner.shutdown()
     logger.info("API stopped")
@@ -62,6 +72,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Global auth gate: enforced only when API_KEY is configured.
+    from app.api.deps import require_api_key
+
+    app.router.dependencies.append(Depends(require_api_key))
 
     for router in (
         health.router,
