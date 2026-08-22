@@ -17,10 +17,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 
-from app.api.auth import current_user
+from app.api.auth import current_user, require_role
 from app.api.deps import DbSession
 from app.api.tenancy import TenantContext, get_tenant
 from app.db.identity import Organization, Session as DbSessionTable, User
+from app.db.models import utcnow
 from app.services import auth as auth_service
 from app.services.auth import Role
 
@@ -71,7 +72,7 @@ def list_users(
     search: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     tenant: TenantContext = Depends(get_tenant),
-    _: Annotated[object, Depends(auth_service.require_role(Role.ADMIN.value))] = None,
+    _: Annotated[object, Depends(require_role(Role.ADMIN.value))] = None,
 ) -> list[User]:
     query = select(User).order_by(User.id.desc()).limit(limit)
     if tenant.organization_id is not None:
@@ -90,7 +91,7 @@ def update_user(
     payload: UpdateUserRequest,
     db: DbSession,
     tenant: TenantContext = Depends(get_tenant),
-    actor: Annotated[User, Depends(auth_service.require_role(Role.ADMIN.value))] = None,
+    actor: Annotated[User, Depends(require_role(Role.ADMIN.value))] = None,
 ) -> User:
     target = _target_scoped(tenant, db, user_id)
 
@@ -120,7 +121,7 @@ def update_user(
             for session_row in db.execute(
                 select(DbSessionTable).where(DbSessionTable.user_id == target.id)
             ).scalars():
-                session_row.revoked_at = auth_service.utcnow()
+                session_row.revoked_at = utcnow()
 
     if changed:
         db.commit()
@@ -139,7 +140,7 @@ def update_user(
 @router.get("/organizations")
 def list_organizations(
     db: DbSession,
-    _: Annotated[object, Depends(auth_service.require_role(Role.ADMIN.value))] = None,
+    _: Annotated[object, Depends(require_role(Role.ADMIN.value))] = None,
 ) -> list[dict]:
     orgs = db.execute(select(Organization).order_by(Organization.id)).scalars().all()
     return [
