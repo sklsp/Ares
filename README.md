@@ -1,6 +1,6 @@
-# AI E-commerce Operations Agent
+# Ares
 
-An internal operations console for a product catalog, driven by a tool-using AI agent
+**AI E-commerce Operations Agent** — an internal operations console for a product catalog, driven by a tool-using AI agent
 that **decides which tools to call**, reads real data from PostgreSQL, proposes changes,
 and **pauses for human approval before writing anything**.
 

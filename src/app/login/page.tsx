@@ -32,7 +32,7 @@ export default function LoginPage() {
   return (
     <main className="login-shell">
       <form className="login-card" onSubmit={submit}>
-        <div className="brand"><div className="brand-mark"><Sparkles size={17} /></div><div><strong>Ops Agent</strong><span>commerce control room</span></div></div>
+        <div className="brand"><div className="brand-mark"><Sparkles size={17} /></div><div><strong>Ares</strong><span>commerce control room</span></div></div>
         <h1>Sign in</h1>
         <p className="muted">Use your operations account to access the console.</p>
         {error && <div className="alert" role="alert">{error}</div>}

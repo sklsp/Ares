@@ -18,7 +18,7 @@ async function signIn(page: import("@playwright/test").Page) {
 test("home page renders for an authenticated manager", async ({ page }) => {
   await signIn(page);
 
-  await expect(page).toHaveTitle(/Ops Agent/);
+  await expect(page).toHaveTitle(/Ares/);
   await expect(page.getByRole("heading", { name: "What should we investigate?" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Product pulse" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Market opportunity feed" })).toBeVisible();

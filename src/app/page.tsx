@@ -95,7 +95,7 @@ export default function Home() {
 
   return <main className="console-shell">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><Sparkles size={17} /></div><div><strong>Ops Agent</strong><span>commerce control room</span></div></div>
+      <div className="brand"><div className="brand-mark"><Sparkles size={17} /></div><div><strong>Ares</strong><span>commerce control room</span></div></div>
       <nav><a className="active"><Activity size={17} /> Overview</a><a href="#intelligence"><Globe2 size={17} /> Intelligence <b>{opportunities.length}</b></a><a href="#catalog"><Package size={17} /> Catalog</a><a href="#approvals"><ShieldCheck size={17} /> Approvals <b>{approvals.length}</b></a></nav>
       <div className="sidebar-foot"><span className={`status-dot ${error ? "bad" : ""}`} /> {healthLabel}<small>{user.email} · {user.role}</small><button className="logout-button" onClick={() => { logout(); router.replace("/login"); }} aria-label="Sign out"><LogOut size={13} /> Sign out</button></div>
     </aside>

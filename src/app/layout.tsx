@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Ops Agent | E-commerce operations",
+  title: "Ares | E-commerce operations",
   description: "Human-supervised AI operations for your product catalog.",
 };
 
