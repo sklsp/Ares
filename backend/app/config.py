@@ -46,6 +46,14 @@ class Settings(BaseSettings):
     # background worker. Used by the test suite for deterministic runs.
     agent_run_inline: bool = False
 
+    # --- Agent reliability ----------------------------------------------
+    # Bounded retries for invalid tool arguments / failed tool calls.
+    max_tool_retries: int = 2
+    # Strict grounding: the agent may not state operational facts unless a
+    # tool call actually succeeded. Default ON — fabricated data is worse
+    # than an honest failure.
+    strict_tool_grounding: bool = True
+
     # --- HTTP -----------------------------------------------------------
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     log_level: str = "INFO"

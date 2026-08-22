@@ -12,6 +12,7 @@ human approval can be resumed by any worker.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,13 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.agent.grounding import (
+    SAFE_FAILURE_MESSAGE,
+    GroundingPolicy,
+    ToolState,
+    classify_response,
+    format_validation_error,
+)
 from app.agent.prompts import system_prompt
 from app.config import Settings
 from app.db.models import (
@@ -35,7 +43,34 @@ from app.integrations.base import EcommerceProvider, ProviderError
 from app.llm.base import LLMError, LLMProvider, Message, ToolCall
 from app.logging_config import get_logger
 from app.tools import ToolContext, ToolError, ToolRegistry
+from app.tools.registry import ToolValidationError
 from app.tools.products import describe_update
+
+
+def _first_field(detail: str) -> str:
+    """Extract the offending field name from a registry validation message.
+
+    Message shape: "Invalid arguments for 'tool' - field: reason"
+    """
+    match = re.search(r"-\s*([a-z_]+)\s*:", detail)
+    if match:
+        return match.group(1)
+    match = re.search(r"'([a-z_]+)'", detail)
+    return match.group(1) if match else "arguments"
+
+
+def _received_value(detail: str) -> str:
+    numbers = re.findall(r"\d+(?:\.\d+)?", detail)
+    return numbers[0] if numbers else "(unparseable)"
+
+
+def _allowed_range(detail: str) -> str:
+    bounds = re.findall(r"(?:less than or equal to|greater than or equal to|<=|>=)\s*(\d+)", detail)
+    if len(bounds) >= 2:
+        return f"{bounds[1]}-{bounds[0]}"
+    if len(bounds) == 1:
+        return f"<= {bounds[0]}"
+    return "see the tool schema"
 
 logger = get_logger(__name__)
 
@@ -72,6 +107,12 @@ class AgentEngine:
         self.provider = provider
         self.settings = settings
         self.ctx = ToolContext(db=db, provider=provider, llm=llm)
+        # Execution-state guard: tracks which tool calls actually succeeded so
+        # a failed call can never be presented as verified data.
+        self.grounding = GroundingPolicy(
+            max_tool_retries=settings.max_tool_retries,
+            require_successful_data=settings.strict_tool_grounding,
+        )
 
     # ------------------------------------------------------------------
     # Public entry points
@@ -114,12 +155,57 @@ class AgentEngine:
                     return self._wrap_up(run, "iteration limit reached")
                 if run.tool_calls_made >= self.settings.agent_max_tool_calls:
                     return self._wrap_up(run, "tool call limit reached")
+                if self.grounding.retries_exhausted():
+                    reason = (
+                        "the agent repeatedly generated invalid tool arguments"
+                        if any(a.error_category == "VALIDATION_ERROR" for a in self.grounding.history)
+                        else "repeated tool failures"
+                    )
+                    return self._fail(
+                        run,
+                        f"I couldn't complete the requested operation because {reason}. "
+                        f"No unverified result was returned.",
+                    )
 
                 messages = self._load_messages(run)
                 response = self.llm.chat(messages, self.registry.llm_specs())
                 run.iterations += 1
 
                 if not response.tool_calls:
+                    # Grounding gate: block fabricated operational facts after
+                    # tool failures. Enforced here, independent of the prompt.
+                    allowed, text = classify_response(response.content or "", self.grounding)
+                    if not allowed:
+                        # Feed the rejection back so the model can retry with
+                        # valid arguments; _fail only when retries are spent.
+                        if self.grounding.retries_exhausted():
+                            logger.warning(
+                                "Run %s: blocked ungrounded answer; retries exhausted",
+                                run.id,
+                            )
+                            self._record(
+                                run,
+                                StepType.ERROR,
+                                "Blocked an unverified answer: required tool data was never retrieved",
+                            )
+                            return self._fail(run, text)
+                        logger.info(
+                            "Run %s: rejected ungrounded answer; returning to tool loop",
+                            run.id,
+                        )
+                        messages.append(
+                            Message(
+                                role="user",
+                                content=(
+                                    "Your previous answer relied on data that was never "
+                                    "retrieved: the tool calls failed. Do not state facts. "
+                                    "Call the tool again with valid arguments (respect the "
+                                    "documented limits), or say you could not verify."
+                                ),
+                            )
+                        )
+                        self._save_messages(run, messages)
+                        continue
                     return self._complete(run, response.content)
 
                 names = ", ".join(tc.name for tc in response.tool_calls)
@@ -155,10 +241,14 @@ class AgentEngine:
             call = ToolCall.from_dict(raw)
 
             if not self.registry.has(call.name):
+                self.grounding.record_failure(call.name, call.arguments,
+                                              "NOT_FOUND", f"Unknown tool {call.name}")
                 self._finish_call(
                     run,
                     call,
-                    {"error": f"Unknown tool '{call.name}'"},
+                    {"error": f"Unknown tool '{call.name}'",
+                     "category": "NOT_FOUND",
+                     "retryable": False},
                     status=StepStatus.ERROR,
                     message=f"Unknown tool: {call.name}",
                 )
@@ -217,10 +307,35 @@ class AgentEngine:
         run.tool_calls_made += 1
         try:
             result = self.registry.execute(call.name, call.arguments, self.ctx)
+        except ToolValidationError as exc:
+            # Schema rejection: give the model a machine-readable correction.
+            detail = str(exc)
+            self.grounding.record_invalid(call.name, call.arguments, detail)
+            correction = format_validation_error(
+                _first_field(detail), _received_value(detail),
+                _allowed_range(detail),
+            )
+            logger.warning("Tool %s rejected arguments: %s", call.name, detail)
+            return (
+                {"error": detail, "correction": correction,
+                 "category": "VALIDATION_ERROR", "retryable": True},
+                StepStatus.ERROR,
+                f"{call.name} arguments invalid: {detail}",
+            )
         except (ToolError, ProviderError) as exc:
             # Tool failures are data for the model, not a crash.
+            category = "UPSTREAM_ERROR" if isinstance(exc, ProviderError) else "INTERNAL_ERROR"
+            self.grounding.record_failure(call.name, call.arguments, category, str(exc))
             logger.warning("Tool %s failed: %s", call.name, exc)
-            return {"error": str(exc)}, StepStatus.ERROR, f"{call.name} failed: {exc}"
+            return (
+                {"error": str(exc), "category": category, "retryable": True},
+                StepStatus.ERROR,
+                f"{call.name} failed: {exc}",
+            )
+        else:
+            self.grounding.record_success(call.name, call.arguments)
+            duration = int((time.monotonic() - started) * 1000)
+            return result, StepStatus.OK, _summarize(call.name, result, duration)
 
         duration = int((time.monotonic() - started) * 1000)
         return result, StepStatus.OK, _summarize(call.name, result, duration)
@@ -336,7 +451,11 @@ class AgentEngine:
         )
         try:
             response = self.llm.chat(messages, tools=None)
-            text = response.content
+            # The same grounding gate applies: a limit hit after failed tools
+            # must not become an invented summary.
+            allowed, text = classify_response(response.content or "", self.grounding)
+            if not allowed:
+                return self._fail(run, text)
         except LLMError as exc:
             text = f"The agent stopped after the {reason} and could not summarise ({exc})."
         return self._complete(run, text, note=f"Stopped early: {reason}")

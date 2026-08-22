@@ -1,0 +1,142 @@
+"""Tool execution grounding.
+
+Guarantees the agent cannot present fabricated operational facts after a
+tool failure. The application — not the prompt — enforces this.
+
+State machine per tool call:
+
+    TOOL_REQUESTED -> VALIDATING -> VALID   -> EXECUTING -> SUCCEEDED
+                                  -> INVALID -> RETRY_REQUIRED (bounded)
+    EXECUTING -> FAILED -> RETRYABLE | TERMINAL
+
+Grounding rule: if a run attempted tool calls that all failed, the final
+response may not state operational facts. It is replaced with an honest
+safe-failure explanation.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+
+class ToolState(StrEnum):
+    TOOL_REQUESTED = "TOOL_REQUESTED"
+    VALIDATING = "VALIDATING"
+    VALID = "VALID"
+    INVALID = "INVALID"
+    RETRY_REQUIRED = "RETRY_REQUIRED"
+    EXECUTING = "EXECUTING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+# Legal transitions. Anything else is a programming error.
+TRANSITIONS: dict[ToolState, set[ToolState]] = {
+    ToolState.TOOL_REQUESTED: {ToolState.VALIDATING},
+    ToolState.VALIDATING: {ToolState.VALID, ToolState.INVALID},
+    ToolState.INVALID: {ToolState.RETRY_REQUIRED},
+    ToolState.RETRY_REQUIRED: {ToolState.TOOL_REQUESTED},  # bounded retry
+    ToolState.VALID: {ToolState.EXECUTING},
+    ToolState.EXECUTING: {ToolState.SUCCEEDED, ToolState.FAILED},
+    ToolState.FAILED: {ToolState.RETRY_REQUIRED},
+    ToolState.SUCCEEDED: set(),
+}
+
+
+@dataclass(slots=True)
+class ToolAttempt:
+    """Provenance record for one tool invocation."""
+
+    tool: str
+    arguments: dict
+    state: ToolState = ToolState.TOOL_REQUESTED
+    error_category: str | None = None
+    error_detail: str | None = None
+    attempts: int = 1
+
+
+@dataclass(slots=True)
+class GroundingPolicy:
+    """Bounded retry + grounding configuration for one agent run."""
+
+    max_tool_retries: int = 2
+    require_successful_data: bool = True
+    history: list[ToolAttempt] = field(default_factory=list)
+
+    def record_invalid(self, tool: str, arguments: dict, detail: str) -> ToolAttempt:
+        attempt = ToolAttempt(tool, arguments, ToolState.INVALID,
+                              "VALIDATION_ERROR", detail)
+        self.history.append(attempt)
+        return attempt
+
+    def record_failure(self, tool: str, arguments: dict, category: str,
+                       detail: str) -> ToolAttempt:
+        attempt = ToolAttempt(tool, arguments, ToolState.FAILED, category, detail)
+        self.history.append(attempt)
+        return attempt
+
+    def record_success(self, tool: str, arguments: dict) -> ToolAttempt:
+        attempt = ToolAttempt(tool, arguments, ToolState.SUCCEEDED)
+        self.history.append(attempt)
+        return attempt
+
+    @property
+    def has_successful_call(self) -> bool:
+        return any(a.state == ToolState.SUCCEEDED for a in self.history)
+
+    @property
+    def has_failed_call(self) -> bool:
+        return any(a.state in {ToolState.INVALID, ToolState.FAILED}
+                   for a in self.history)
+
+    def retries_exhausted(self) -> bool:
+        failures = [a for a in self.history
+                    if a.state in {ToolState.INVALID, ToolState.FAILED}]
+        return len(failures) > self.max_tool_retries
+
+
+SAFE_FAILURE_MESSAGE = (
+    "I couldn't complete this request because the required store data could "
+    "not be retrieved. No verified result is available, so I won't guess."
+)
+
+
+def format_validation_error(field_name: str, received: object,
+                            allowed: str) -> str:
+    """Machine-readable correction the model can act on."""
+    return (
+        f"VALIDATION_ERROR\n"
+        f"Field: {field_name}\n"
+        f"Received: {received}\n"
+        f"Allowed: {allowed}\n\n"
+        f"Retry the tool with valid arguments."
+    )
+
+
+_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+def classify_response(text: str, policy: GroundingPolicy) -> tuple[bool, str]:
+    """Decide whether a proposed final answer may be sent.
+
+    Returns (allowed, replacement_text). When the run had failed tool calls,
+    no successful call, and the answer contains numbers (operational facts),
+    it is replaced with the safe-failure message.
+    """
+    if not policy.require_successful_data:
+        return True, text
+    if policy.has_successful_call:
+        return True, text
+    if not policy.has_failed_call:
+        return True, text  # pure conversation, no tools involved
+    # Tools were attempted and every one failed.
+    if policy.retries_exhausted() or _NUMBER.search(text or ""):
+        reason = (
+            " The agent repeatedly generated invalid tool arguments."
+            if policy.retries_exhausted()
+            else " The tool calls did not succeed."
+        )
+        return False, SAFE_FAILURE_MESSAGE + reason
+    return True, text
