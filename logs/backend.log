@@ -33,3 +33,8 @@ INFO:     127.0.0.1:64076 - "GET /intelligence/jobs HTTP/1.1" 200 OK
 INFO:     127.0.0.1:64074 - "GET /products?limit=12 HTTP/1.1" 200 OK
 INFO:     127.0.0.1:64075 - "GET /intelligence/opportunities HTTP/1.1" 200 OK
 INFO:     127.0.0.1:64073 - "GET /analytics/summary HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64197 - "GET /approvals HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64199 - "GET /intelligence/opportunities HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64198 - "GET /intelligence/jobs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64196 - "GET /products?limit=12 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64195 - "GET /analytics/summary HTTP/1.1" 200 OK
