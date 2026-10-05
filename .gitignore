@@ -58,3 +58,6 @@ backend/*.db
 
 # runtime logs
 logs/
+
+# third-party agent skills stay local
+.claude/skills/
