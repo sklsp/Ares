@@ -5,7 +5,7 @@ E-Commerce Intelligence Platform.
 
 **Data authority:** PostgreSQL is the business source of truth (catalog,
 users, research jobs, opportunities, audit logs). Redis is transient queue
-transport and rate-limit state — losing it loses nothing authoritative.
+transport and rate-limit state: losing it loses nothing authoritative.
 
 ---
 
@@ -114,7 +114,7 @@ preservation.
 | `/live` | Process is running | never (liveness) |
 | `/ready` | Can serve traffic | database unreachable |
 | `/health` | Dependency detail | reports degraded + reason |
-| `/metrics` | Prometheus exposition | — |
+| `/metrics` | Prometheus exposition | - |
 
 Worker health is observable through `/metrics` (`worker_jobs_total`,
 `worker_job_duration_seconds`) and job rows (`worker_id`, `retry_count`).
@@ -132,14 +132,14 @@ retries and include it in support requests.
 ## Backups
 
 ```powershell
-# PostgreSQL (authoritative business data) — nightly, plus before deploys
+# PostgreSQL (authoritative business data): nightly, plus before deploys
 docker compose exec postgres pg_dump -U ecommerce ecommerce_agent > backup.sql
 
 # Restore
 docker compose exec -T postgres psql -U ecommerce ecommerce_agent < backup.sql
 ```
 
-Application configuration lives in your secret store / `.env` — back it up
+Application configuration lives in your secret store / `.env`: back it up
 with your infrastructure secrets, never in the repository.
 
 **Redis:** no backup required. On restore, workers re-poll and startup
@@ -152,7 +152,7 @@ recovery re-enqueues QUEUED/RUNNING jobs from PostgreSQL.
 - **Bad application deploy:** redeploy the previous image tag. Migrations
   are additive; older code runs safely against a newer schema.
 - **Failed migration:** `alembic downgrade <revision>` (reversible where
-  practical — check the migration's `downgrade()` first), then redeploy.
+  practical: check the migration's `downgrade()` first), then redeploy.
 - **Broken worker version:** stop workers, redeploy, restart. Jobs stay
   QUEUED in PostgreSQL and are reclaimed automatically.
 - **Redis outage:** API returns a clear error on job submission and keeps
@@ -167,10 +167,10 @@ recovery re-enqueues QUEUED/RUNNING jobs from PostgreSQL.
 
 | Symptom | Diagnosis |
 |---|---|
-| `/ready` 503 | Database down or `DATABASE_URL` wrong — check `/health` detail |
-| Jobs stay QUEUED | Workers not running, or `REDIS_URL` unreachable — `scripts/test_queue.py` |
+| `/ready` 503 | Database down or `DATABASE_URL` wrong: check `/health` detail |
+| Jobs stay QUEUED | Workers not running, or `REDIS_URL` unreachable: `scripts/test_queue.py` |
 | Jobs stuck RUNNING | Worker crashed; reclaim runs every 30s, or restart to recover |
-| `llm.available: false` in `/health` | Ollama down or model missing — `ollama pull llama3.2` |
+| `llm.available: false` in `/health` | Ollama down or model missing: `ollama pull llama3.2` |
 | 429 responses | Rate limit hit; shared via Redis across replicas |
 | 401 after login worked | Session expired (12h) or user deactivated by an admin |
 | Login fails with valid password | Check `/auth/audit` (manager+) for `login.failed` |
