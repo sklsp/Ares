@@ -93,6 +93,10 @@ export default function Home() {
     return <main className="login-shell"><div className="login-card"><p className="muted">Checking your session…</p></div></main>;
   }
 
+  // the console only renders after sign-in, in the browser, so the visitor's own clock is used
+  const now = new Date();
+  const greeting = now.getHours() < 12 ? "Good morning" : now.getHours() < 18 ? "Good afternoon" : "Good evening";
+
   return <main className="console-shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><Sparkles size={17} /></div><div><strong>Ares</strong><span>commerce control room</span></div></div>
@@ -100,7 +104,7 @@ export default function Home() {
       <div className="sidebar-foot"><span className={`status-dot ${error ? "bad" : ""}`} /> {healthLabel}<small>{user.email} · {user.role}</small><button className="logout-button" onClick={() => { logout(); router.replace("/login"); }} aria-label="Sign out"><LogOut size={13} /> Sign out</button></div>
     </aside>
     <section className="workspace">
-      <header className="topbar"><div><p className="eyebrow">Tuesday, August 21, 2026</p><h1>Good morning, manager.</h1></div><button className="icon-button" onClick={() => { setLoading(true); void load(); }} aria-label="Refresh data" title="Refresh data"><RefreshCw size={17} /></button></header>
+      <header className="topbar"><div><p className="eyebrow">{now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</p><h1>{greeting}, {user.role}.</h1></div><button className="icon-button" onClick={() => { setLoading(true); void load(); }} aria-label="Refresh data" title="Refresh data"><RefreshCw size={17} /></button></header>
       {error && <div className="alert"><AlertTriangle size={18} /><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss error"><X size={16} /></button></div>}
       <section className="hero-panel"><div><span className="kicker"><CircleDot size={12} /> LIVE STORE SIGNAL</span><h2>Keep the catalog<br /><em>moving forward.</em></h2><p>Ask the operations agent to investigate performance, find weak copy, or prepare a catalog change for your approval.</p></div><div className="hero-orbit"><div className="orbit-line" /><Sparkles size={31} /><span>AI</span></div></section>
       <section className="metric-grid">{([["Catalog", analytics?.product_count ?? "-", `${analytics?.active_product_count ?? 0} active`, Package], ["Inventory", analytics?.total_inventory_units ?? "-", `${analytics?.low_stock_count ?? 0} low stock`, ArrowUpRight], ["Revenue · 30d", analytics ? money(analytics.sales.total_revenue) : "-", `${analytics?.sales.order_count ?? 0} orders`, Activity], ["Content health", analytics ? `${analytics.average_content_score}/100` : "-", `${analytics?.weak_content_count ?? 0} need attention`, Sparkles]] as [string, string | number, string, LucideIcon][]).map(([label, value, note, Icon]) => <article className="metric" key={String(label)}><div className="metric-label"><span>{label}</span><Icon size={16} /></div><strong>{value}</strong><small>{note}</small></article>)}</section>

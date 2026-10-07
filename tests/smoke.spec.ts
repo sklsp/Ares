@@ -12,7 +12,7 @@ async function signIn(page: import("@playwright/test").Page) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: /Sign in/ }).click();
-  await expect(page.getByRole("heading", { name: "Good morning, manager." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening), manager\.$/ })).toBeVisible();
 }
 
 test("home page renders for an authenticated manager", async ({ page }) => {
