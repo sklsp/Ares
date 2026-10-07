@@ -61,3 +61,7 @@ logs/
 
 # third-party agent skills stay local
 .claude/skills/
+
+# local tool state, per machine
+.claude/settings.local.json
+.run/
