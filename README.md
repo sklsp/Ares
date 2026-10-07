@@ -1,5 +1,7 @@
 # Ares
 
+[![CI](https://github.com/sklsp/Ares/actions/workflows/ci.yml/badge.svg)](https://github.com/sklsp/Ares/actions/workflows/ci.yml)
+
 An AI e-commerce operations console. You give it a task in plain language ("improve the three worst product descriptions"), and an LLM agent plans it, calls tools against your catalog, and pauses for human approval before any write. Every step is persisted so you can audit exactly what happened.
 
 ## What it does
