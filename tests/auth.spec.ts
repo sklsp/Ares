@@ -35,10 +35,10 @@ test("session survives a page refresh", async ({ page }) => {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: /Sign in/ }).click();
-  await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening), manager\.$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening), viewer\.$/ })).toBeVisible();
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening), manager\.$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening), viewer\.$/ })).toBeVisible();
   await expect(page.getByText(email)).toBeVisible();
 });
 
@@ -65,7 +65,7 @@ test("sign out returns to login and clears access", async ({ page }) => {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: /Sign in/ }).click();
-  await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening), manager\.$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening), viewer\.$/ })).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login/);
