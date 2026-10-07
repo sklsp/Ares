@@ -44,6 +44,7 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +75,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        # no --with-deps: the runner image already has the system libraries, and apt mirrors can hang for hours
+        run: npx playwright install chromium
       - name: Run browser tests
         run: npx playwright test --project=chromium --reporter=line
         env:
