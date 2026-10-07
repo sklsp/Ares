@@ -65,7 +65,7 @@ jobs:
         run: python -m app.seed
       - name: Start backend
         working-directory: backend
-        run: python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+        run: python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > backend.log 2>&1 &
       - name: Wait for backend
         run: |
           for i in $(seq 1 30); do
@@ -81,3 +81,6 @@ jobs:
         run: npx playwright test --project=chromium --reporter=line
         env:
           CI: "true"
+      - name: Backend log
+        if: failure()
+        run: cat backend/backend.log
