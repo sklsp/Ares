@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db.base import Base, SessionLocal, engine
 from app.db.models import AgentRun, Inventory, Order, Product, utcnow
+from app.db import identity  # noqa: F401 - registers the users, sessions and audit tables for create_all
 from app.logging_config import configure_logging, get_logger
 from app.seed_data import PRODUCTS
 

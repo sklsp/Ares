@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
 
 jobs:
@@ -38,12 +38,13 @@ jobs:
       - name: Lint
         run: npm run lint
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npx next typegen && npx tsc --noEmit   # LayoutProps and PageProps are generated route types
       - name: Production build
         run: npm run build
 
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +65,7 @@ jobs:
         run: python -m app.seed
       - name: Start backend
         working-directory: backend
-        run: python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+        run: python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > backend.log 2>&1 &
       - name: Wait for backend
         run: |
           for i in $(seq 1 30); do
@@ -74,8 +75,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox webkit
+        # no --with-deps: the runner image already has the system libraries, and apt mirrors can hang for hours
+        run: npx playwright install chromium
       - name: Run browser tests
         run: npx playwright test --project=chromium --reporter=line
         env:
           CI: "true"
+      - name: Backend log
+        if: failure()
+        run: cat backend/backend.log
