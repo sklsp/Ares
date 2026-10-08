@@ -79,6 +79,16 @@ def create_app() -> FastAPI:
 
     app.add_middleware(instrument_requests)
 
+    # The API answers JSON only: never sniff it into something else, never frame it, and
+    # never leak a URL in the Referer header.
+    @app.middleware("http")
+    async def security_headers(request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        return response
+
     @app.get("/metrics", include_in_schema=False)
     def prometheus_metrics() -> "Response":
         from app.observability.metrics import render
