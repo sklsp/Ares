@@ -122,17 +122,16 @@ $ErrorActionPreference = 'Continue'
 $ErrorActionPreference = $previousEap
 Pop-Location
 
-# --- 5. Local admin account ------------------------------------------------------
+# --- 5. Local admin account (idempotent) --------------------------------------
+# Public sign-up only makes viewers, so the admin is created directly in the database.
 $adminEmail = 'admin@ares.local'
 $adminPassword = 'ares-local-admin'
-try {
-    Invoke-RestMethod -Uri 'http://127.0.0.1:8000/auth/register' -Method Post `
-        -ContentType 'application/json' `
-        -Body (@{ email = $adminEmail; password = $adminPassword; role = 'admin' } | ConvertTo-Json) | Out-Null
-    Write-Host "  created admin account: $adminEmail"
-} catch {
-    Write-Host "  admin account already exists: $adminEmail"
-}
+Push-Location $BackendDir
+$env:ARES_USER_PASSWORD = $adminPassword
+$result = & $VenvPython -m app.create_user $adminEmail --role admin
+Remove-Item Env:ARES_USER_PASSWORD
+Pop-Location
+Write-Host "  admin account $result"
 
 # --- 6. Frontend -----------------------------------------------------------------
 if (Test-PortInUse -Port 3000) {

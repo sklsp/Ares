@@ -1,12 +1,12 @@
 import { expect, test } from "@playwright/test";
 
+import { createUser } from "./admin";
+
 const password = "long enough password";
 
 test("login grants access to the operations console", async ({ page }) => {
   const email = `e2e-${Date.now()}@example.com`;
-  await page.request.post("http://localhost:8000/auth/register", {
-    data: { email, password, role: "manager" },
-  });
+  await createUser(page.request, email, password, "manager");
 
   await page.goto("/");
   // Unauthenticated users are redirected to the login screen.

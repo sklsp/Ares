@@ -194,3 +194,21 @@ def client(llm):
 def product_id(db):
     """Id of the weakest-copy product (RUN-003)."""
     return db.query(Product).filter(Product.sku == "RUN-003").one().id
+
+
+@pytest.fixture
+def login_as(client, db):
+    """Create a user with any role (as an admin or app.create_user would) and sign in.
+
+    Returns Bearer headers. Public sign-up only makes viewers, so tests that need a
+    manager or an admin create them this way.
+    """
+    from app.create_user import create_user
+
+    def _login(email: str, role: str) -> dict[str, str]:
+        create_user(db, email, "long enough password", role)
+        login = client.post("/auth/login", json={"email": email, "password": "long enough password"})
+        assert login.status_code == 200, login.text
+        return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    return _login

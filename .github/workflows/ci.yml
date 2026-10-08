@@ -63,6 +63,12 @@ jobs:
       - name: Seed database
         working-directory: backend
         run: python -m app.seed
+      - name: Create the admin account
+        # public sign-up only makes viewers; the browser tests create managers through this admin
+        working-directory: backend
+        run: python -m app.create_user admin@ares.local --role admin
+        env:
+          ARES_USER_PASSWORD: ares-local-admin
       - name: Start backend
         working-directory: backend
         run: python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > backend.log 2>&1 &

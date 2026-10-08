@@ -45,7 +45,16 @@ docker compose up --scale api=2 --scale worker=4
 
 Copy `.env.production.example` to `.env` and fill in real values. Required
 in production: `DATABASE_URL` (PostgreSQL), `REDIS_URL`, `API_KEY`,
-`EMBEDDED_WORKER=false`. Validate before starting:
+`EMBEDDED_WORKER=false`, `ALLOW_SELF_REGISTRATION=false`. Create the first admin
+once (the password comes from the environment, not the command line):
+
+```powershell
+cd backend
+$env:ARES_USER_PASSWORD = '<a long password>'
+python -m app.create_user admin@your-company.com --role admin
+```
+
+That admin creates the other accounts. Validate before starting:
 
 ```powershell
 cd backend
