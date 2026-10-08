@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ShieldCheck, Sparkles } from "lucide-react";
 import { useAuth } from "../auth-context";
@@ -12,12 +12,16 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // Navigate after render, not during it: an already signed-in visitor goes to the console.
+  useEffect(() => {
+    if (!loading && user) router.replace("/");
+  }, [loading, user, router]);
+
   if (loading) {
     return <main className="login-shell"><div className="login-card"><p className="muted">Restoring session…</p></div></main>;
   }
 
   if (user) {
-    router.replace("/");
     return <main className="login-shell"><div className="login-card"><p className="muted">Signed in as {user.email}. Redirecting…</p></div></main>;
   }
 
