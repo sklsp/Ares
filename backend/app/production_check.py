@@ -44,6 +44,13 @@ def validate_production() -> list[str]:
             "on API replicas and run dedicated `python -m app.worker` processes."
         )
 
+    if settings.allow_self_registration:
+        problems.append(
+            "ALLOW_SELF_REGISTRATION=true lets anyone create a viewer account that can "
+            "read the catalog. Set ALLOW_SELF_REGISTRATION=false and create accounts as "
+            "an admin (the first one with `python -m app.create_user EMAIL --role admin`)."
+        )
+
     if settings.llm_provider == "openai_compatible" and not settings.openai_api_key:
         problems.append("LLM_PROVIDER=openai_compatible but OPENAI_API_KEY is empty")
 

@@ -14,7 +14,7 @@ from datetime import timedelta
 from enum import StrEnum
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session as DbSession  # the identity model below is also called Session
 
 from app.db.identity import AuditLog, Organization, Session, User
 from app.db.models import utcnow
@@ -61,7 +61,7 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(digest.hex(), digest_hex)
 
 
-def create_session(db: Session, user: User) -> tuple[str, Session]:
+def create_session(db: DbSession, user: User) -> tuple[str, Session]:
     token = secrets.token_urlsafe(32)
     row = Session(
         token_hash=hashlib.sha256(token.encode()).hexdigest(),
@@ -74,7 +74,7 @@ def create_session(db: Session, user: User) -> tuple[str, Session]:
     return token, row
 
 
-def resolve_session(db: Session, token: str) -> User | None:
+def resolve_session(db: DbSession, token: str) -> User | None:
     row = db.execute(
         select(Session).where(Session.token_hash == hashlib.sha256(token.encode()).hexdigest())
     ).scalars().first()
@@ -86,7 +86,7 @@ def resolve_session(db: Session, token: str) -> User | None:
     return user
 
 
-def revoke_session(db: Session, token: str) -> bool:
+def revoke_session(db: DbSession, token: str) -> bool:
     row = db.execute(
         select(Session).where(Session.token_hash == hashlib.sha256(token.encode()).hexdigest())
     ).scalars().first()
@@ -97,7 +97,7 @@ def revoke_session(db: Session, token: str) -> bool:
     return True
 
 
-def audit(db: Session, *, action: str, actor_user_id: int | None = None,
+def audit(db: DbSession, *, action: str, actor_user_id: int | None = None,
           organization_id: int | None = None, resource: str = "",
           outcome: str = "success", correlation_id: str | None = None,
           detail: dict | None = None) -> None:
@@ -114,7 +114,7 @@ def audit(db: Session, *, action: str, actor_user_id: int | None = None,
     db.commit()
 
 
-def ensure_default_organization(db: Session) -> Organization:
+def ensure_default_organization(db: DbSession) -> Organization:
     org = db.execute(select(Organization)).scalars().first()
     if org is None:
         org = Organization(name="Default")
@@ -126,5 +126,5 @@ def ensure_default_organization(db: Session) -> Organization:
 
 __all__ = ["Organization", "Role", "SESSION_TTL", "Session", "User",
            "audit", "create_session", "ensure_default_organization",
-           "hash_password", "require_role", "resolve_session", "revoke_session",
+           "hash_password", "resolve_session", "revoke_session",
            "role_at_least", "verify_password"]

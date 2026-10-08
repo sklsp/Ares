@@ -57,14 +57,13 @@ def test_role_hierarchy():
 # --- API surface --------------------------------------------------------
 def test_register_login_me_logout_flow(client):
     register = client.post("/auth/register", json={
-        "email": "manager@example.com", "password": "long enough password",
-        "role": "manager",
+        "email": "member@example.com", "password": "long enough password",
     })
     assert register.status_code == 201
-    assert register.json()["role"] == "manager"
+    assert register.json()["role"] == "viewer"
 
     login = client.post("/auth/login", json={
-        "email": "manager@example.com", "password": "long enough password",
+        "email": "member@example.com", "password": "long enough password",
     })
     assert login.status_code == 200
     token = login.json()["access_token"]
@@ -72,7 +71,7 @@ def test_register_login_me_logout_flow(client):
 
     me = client.get("/auth/me", headers=headers)
     assert me.status_code == 200
-    assert me.json()["email"] == "manager@example.com"
+    assert me.json()["email"] == "member@example.com"
 
     logout = client.post("/auth/logout", headers=headers)
     assert logout.status_code == 204
@@ -121,21 +120,79 @@ def test_audit_requires_manager_role(client):
     assert client.get("/auth/audit", headers=headers).status_code == 403
 
 
-def test_audit_visible_to_manager_and_records_events(client):
+def test_audit_visible_to_manager_and_records_events(client, login_as):
     client.post("/auth/register", json={
-        "email": "boss@example.com", "password": "long enough password",
-        "role": "manager",
+        "email": "walk-in@example.com", "password": "long enough password",
     })
-    login = client.post("/auth/login", json={
-        "email": "boss@example.com", "password": "long enough password",
-    })
-    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    headers = login_as("boss@example.com", "manager")
 
     audit = client.get("/auth/audit", headers=headers)
     assert audit.status_code == 200
     actions = {row["action"] for row in audit.json()}
     assert "user.registered" in actions
     assert "login.success" in actions
+
+
+# --- roles are never self-assigned ------------------------------------------
+def test_public_registration_cannot_pick_a_role(client, db):
+    from app.db.identity import User
+
+    for role in ("admin", "manager", "analyst"):
+        response = client.post("/auth/register", json={
+            "email": f"{role}@example.com", "password": "long enough password", "role": role,
+        })
+        assert response.status_code == 403
+    assert db.query(User).count() == 0
+
+
+def test_admin_creates_accounts_with_roles_in_its_own_organization(client, login_as, db):
+    from app.db.identity import User
+
+    headers = login_as("admin@example.com", "admin")
+    created = client.post("/auth/register", headers=headers, json={
+        "email": "new-manager@example.com", "password": "long enough password", "role": "manager",
+    })
+    assert created.status_code == 201
+    admin = db.query(User).filter(User.email == "admin@example.com").one()
+    assert created.json()["role"] == "manager"
+    assert created.json()["organization_id"] == admin.organization_id
+
+
+def test_a_manager_cannot_assign_roles(client, login_as):
+    headers = login_as("boss@example.com", "manager")
+    response = client.post("/auth/register", headers=headers, json={
+        "email": "analyst@example.com", "password": "long enough password", "role": "analyst",
+    })
+    assert response.status_code == 403
+
+
+def test_self_registration_can_be_switched_off(client, login_as, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "allow_self_registration", False)
+    payload = {"email": "walk-in@example.com", "password": "long enough password"}
+    assert client.post("/auth/register", json=payload).status_code == 403
+
+    headers = login_as("admin@example.com", "admin")
+    assert client.post("/auth/register", headers=headers, json=payload).status_code == 201
+
+
+def test_create_user_command_makes_the_first_admin_once(monkeypatch, capsys):
+    from app.create_user import main
+
+    monkeypatch.setenv("ARES_USER_PASSWORD", "long enough password")
+    assert main(["first-admin@example.com", "--role", "admin"]) == 0
+    assert main(["first-admin@example.com", "--role", "viewer"]) == 0
+    out = capsys.readouterr().out
+    assert "created: first-admin@example.com (admin)" in out
+    assert "already exists: first-admin@example.com (admin)" in out
+
+
+def test_create_user_command_refuses_a_short_password(monkeypatch):
+    from app.create_user import main
+
+    monkeypatch.setenv("ARES_USER_PASSWORD", "short")
+    assert main(["someone@example.com"]) == 2
 
 
 def test_machine_api_key_still_authenticates(monkeypatch):
@@ -149,3 +206,13 @@ def test_machine_api_key_still_authenticates(monkeypatch):
         me = probe.get("/auth/me", headers={"X-API-Key": "machine-key"})
         assert me.status_code == 200
         assert me.json()["role"] == "admin"
+
+
+def test_production_check_flags_open_self_registration(monkeypatch):
+    from app.config import settings
+    from app.production_check import validate_production
+
+    monkeypatch.setattr(settings, "allow_self_registration", True)
+    assert any("ALLOW_SELF_REGISTRATION" in p for p in validate_production())
+    monkeypatch.setattr(settings, "allow_self_registration", False)
+    assert not any("ALLOW_SELF_REGISTRATION" in p for p in validate_production())

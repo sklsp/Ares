@@ -15,16 +15,9 @@ def _clean_limits():
 
 
 @pytest.fixture
-def auth_headers(client):
-    """A registered, authenticated manager for rate-limited endpoints."""
-    client.post("/auth/register", json={
-        "email": "limiter@example.com", "password": "long enough password",
-        "role": "manager",
-    })
-    login = client.post("/auth/login", json={
-        "email": "limiter@example.com", "password": "long enough password",
-    })
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+def auth_headers(login_as):
+    """An authenticated manager for rate-limited endpoints."""
+    return login_as("limiter@example.com", "manager")
 
 
 def test_agent_run_is_rate_limited(client, llm):

@@ -10,7 +10,7 @@ An AI e-commerce operations console. You give it a task in plain language ("impr
 - **18 tools in six categories** (products, inventory, analytics, content, intelligence, agent). Each tool has Pydantic input and output schemas plus a read/write class. READ tools run immediately; WRITE tools create an approval request and pause the run until a human approves or rejects it in the UI.
 - **Deterministic content scoring**: `analyze_product_content` scores descriptions with weighted Python rules (length, title quality, specifics, filler detection), so rankings are stable and testable. The LLM only writes replacement copy.
 - **Market intelligence panel**: queues background jobs that discover public store URLs, crawl bounded pages (robots.txt, throttling, depth budget), extract product data, and persist scored opportunities with source evidence. Scraped text is treated as untrusted evidence, never instructions.
-- **Auth and roles**: password sessions via `/auth/*`, server-side roles `admin`, `manager`, `analyst`, `viewer`, manager-only audit log at `/auth/audit`. Optional `X-API-Key` for machine clients when `API_KEY` is set.
+- **Auth and roles**: password sessions via `/auth/*`, server-side roles `admin`, `manager`, `analyst`, `viewer`, manager-only audit log at `/auth/audit`. Roles are never self-assigned: public sign-up creates viewers, admins create other roles (`POST /auth/register` with their token) and change them at `/admin/users`, and the first admin comes from `python -m app.create_user EMAIL --role admin`. `ALLOW_SELF_REGISTRATION=false` closes public sign-up. Optional `X-API-Key` for machine clients when `API_KEY` is set.
 - **Observability**: an ordered `agent_steps` trail per run, SSE event stream, Prometheus-style counters at `/metrics`, correlation IDs on responses.
 - **MCP server** over stdio exposing the same tool registry (`python -m mcp_server`).
 
@@ -37,6 +37,7 @@ cd backend
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements-dev.txt   # Linux/macOS: .venv/bin/python
 .venv/Scripts/python -m app.seed
+$env:ARES_USER_PASSWORD='choose-a-password'; .venv/Scripts/python -m app.create_user you@example.com --role admin   # the first admin
 .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
 
 npm install
@@ -48,7 +49,7 @@ Open http://localhost:3000. On Windows, `scripts/start.ps1` does both halves and
 ## Tests
 
 ```bash
-cd backend && .venv/Scripts/python -m pytest     # 170 tests (168 passed, 2 skipped), scripted LLM provider, no Ollama or network needed
+cd backend && .venv/Scripts/python -m pytest     # 177 tests (175 passed, 2 skipped), scripted LLM provider, no Ollama or network needed
 npm run lint && npx tsc --noEmit && npm run build
 npm test                                         # Playwright smoke, needs a running seeded app
 ```

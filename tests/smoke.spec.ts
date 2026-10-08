@@ -1,13 +1,13 @@
 import { expect, test } from "@playwright/test";
 
+import { createUser } from "./admin";
+
 const password = "long enough password";
 
 // The console requires authentication; each test signs in as a fresh manager.
 async function signIn(page: import("@playwright/test").Page) {
   const email = `smoke-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
-  await page.request.post("http://localhost:8000/auth/register", {
-    data: { email, password, role: "manager" },
-  });
+  await createUser(page.request, email, password, "manager");
   await page.goto("/login");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);

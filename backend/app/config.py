@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # When set, every API request must present this value in X-API-Key.
     # Leave empty for open local development.
     api_key: str | None = None
+    # Public sign-up (POST /auth/register without an admin token) creates viewers
+    # only. Set ALLOW_SELF_REGISTRATION=false in production so accounts come from
+    # an admin or `python -m app.create_user`.
+    allow_self_registration: bool = True
 
     # --- Intelligence crawling ------------------------------------------
     # SSRF guard: private/loopback destinations are blocked unless this is

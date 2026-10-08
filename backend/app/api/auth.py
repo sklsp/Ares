@@ -52,11 +52,8 @@ def _bearer_token(request: Request) -> str | None:
     return None
 
 
-def current_user(request: Request, db: DbSession) -> User:
-    """Resolve the caller: session token first, then the shared API key.
-
-    Raises 401 when neither credential is valid or when neither is configured.
-    """
+def _resolve_caller(request: Request, db) -> "User | MachineUser | None":
+    """The caller behind a Bearer session token or the shared API key, or None."""
     token = _bearer_token(request)
     if token:
         user = auth_service.resolve_session(db, token)
@@ -67,6 +64,17 @@ def current_user(request: Request, db: DbSession) -> User:
     api_key = request.headers.get("X-API-Key")
     if settings.api_key and api_key and hmac_compare(api_key, settings.api_key):
         return MachineUser()
+    return None
+
+
+def current_user(request: Request, db: DbSession) -> User:
+    """Resolve the caller: session token first, then the shared API key.
+
+    Raises 401 when neither credential is valid or when neither is configured.
+    """
+    caller = _resolve_caller(request, db)
+    if caller is not None:
+        return caller
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -108,13 +116,33 @@ def require_role(required: str):
 
 # --- endpoints ----------------------------------------------------------
 @router.post("/register", response_model=MeResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, db: DbSession) -> User:
+def register(payload: RegisterRequest, request: Request, db: DbSession) -> User:
+    """Public sign-up creates viewers; an admin caller may create any role.
+
+    Roles are never self-assigned: without an admin's Bearer token (or the
+    machine API key) only `viewer` is accepted, and with
+    ALLOW_SELF_REGISTRATION=false public sign-up is closed altogether.
+    """
+    caller = _resolve_caller(request, db)
+    by_admin = caller is not None and auth_service.role_at_least(caller.role, Role.ADMIN.value)
+    if not by_admin:
+        if not settings.allow_self_registration:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "Self-registration is disabled: ask an administrator for an account")
+        if payload.role != Role.VIEWER.value:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "Only an administrator can create accounts with a role other than viewer")
+
     existing = db.execute(select(User).where(User.email == payload.email)).scalars().first()
     if existing is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
-    org = auth_service.ensure_default_organization(db)
+    # An admin's new user joins the admin's own organization; sign-ups join the default one.
+    if by_admin and caller.organization_id is not None:
+        organization_id = caller.organization_id
+    else:
+        organization_id = auth_service.ensure_default_organization(db).id
     user = User(
-        organization_id=org.id,
+        organization_id=organization_id,
         email=payload.email,
         password_hash=auth_service.hash_password(payload.password),
         role=payload.role,
@@ -122,8 +150,10 @@ def register(payload: RegisterRequest, db: DbSession) -> User:
     db.add(user)
     db.commit()
     db.refresh(user)
-    auth_service.audit(db, action="user.registered", actor_user_id=user.id,
-                       organization_id=org.id, resource=f"user:{user.id}")
+    auth_service.audit(db, action="user.registered",
+                       actor_user_id=caller.id if by_admin else user.id,
+                       organization_id=organization_id, resource=f"user:{user.id}",
+                       detail={"role": user.role, "by_admin": by_admin})
     return user
 
 
