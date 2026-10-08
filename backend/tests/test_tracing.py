@@ -52,7 +52,7 @@ def test_no_sensitive_values_in_span_helper_contract():
     """The helper passes through only what callers give it; document the rule."""
     from app.observability import tracing
 
-    # Callers must pass identifiers only — enforced by review and this contract test.
+    # Callers must pass identifiers only, enforced by review and this contract test.
     allowed = {"job.id": 1, "organization.id": 2, "correlation.id": "abc"}
     assert all(key.split(".")[0] in {"job", "organization", "correlation",
                                      "http", "worker"} for key in allowed)

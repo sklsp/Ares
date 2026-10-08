@@ -29,7 +29,7 @@ logger = get_logger(__name__)
 POLL_TIMEOUT_SECONDS = 1.0
 RECLAIM_INTERVAL_SECONDS = 30.0
 STALE_PROCESSING_SECONDS = 300.0
-# Exponential backoff for retries (seconds): 5, 15, 45 — capped.
+# Exponential backoff for retries (seconds): 5, 15, 45, then capped.
 BACKOFF_BASE_SECONDS = 5.0
 BACKOFF_CAP_SECONDS = 600.0
 MAX_ATTEMPTS = 3

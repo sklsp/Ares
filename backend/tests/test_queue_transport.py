@@ -1,7 +1,7 @@
 """Multi-worker queue integration tests against a real Redis code path.
 
 Uses fakeredis so the actual Redis commands (BRPOPLPUSH semantics, sorted
-sets, expiry) are exercised — not a mock of our own abstraction.
+sets, expiry) are exercised, not a mock of our own abstraction.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def test_two_workers_receive_different_jobs(backend):
         thread.join()
 
     # Guarantee: every job delivered exactly once (a fast worker may take
-    # both — distribution is opportunistic, exclusivity is the contract).
+    # both: distribution is opportunistic, exclusivity is the contract).
     assert len(delivered) == 2
     assert len({job_id for _, job_id in delivered}) == 2
 
