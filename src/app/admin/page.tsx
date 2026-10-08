@@ -66,10 +66,10 @@ export default function AdminPage() {
       <header className="topbar"><div><p className="eyebrow">ADMIN / IDENTITY</p><h1>User management</h1></div></header>
       {error && <div className="alert" role="alert">{error}</div>}
       <section className="panel">
-        <div className="panel-heading"><div><span className="section-number">USERS</span><h3>Organization members</h3></div>
+        <div className="panel-heading"><div><span className="section-number">USERS</span><h2>Organization members</h2></div>
           <label className="search-box"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by email" /></label>
         </div>
-        <div className="table-wrap"><table><thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+        <div className="table-wrap" tabIndex={0} role="region" aria-label="Organization members"><table><thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>
           {users.map((item) => <tr key={item.id}>
             <td><strong>{item.email}</strong><span>org #{item.organization_id}</span></td>
             <td><select value={item.role} aria-label={`Role for ${item.email}`} onChange={(event) => void update(item, { role: event.target.value })}>
@@ -82,7 +82,7 @@ export default function AdminPage() {
           </tr>)}
         </tbody></table>{!loading && !users.length && <div className="empty">No users match that search.</div>}</div>
       </section>
-      <section className="panel approvals-panel"><div className="panel-heading"><div><span className="section-number">SAFETY</span><h3>Protections</h3></div></div>
+      <section className="panel approvals-panel"><div className="panel-heading"><div><span className="section-number">SAFETY</span><h2>Protections</h2></div></div>
         <div className="empty"><ShieldCheck size={17} /> The last active administrator cannot be demoted or deactivated. All changes are audit-logged.</div>
       </section>
     </section>
