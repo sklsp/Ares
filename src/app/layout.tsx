@@ -22,6 +22,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
+      // globals.css scrolls smoothly; this lets Next jump instantly on route changes (Next 16 opt-in)
+      data-scroll-behavior="smooth"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col"><AuthProvider>{children}</AuthProvider></body>
