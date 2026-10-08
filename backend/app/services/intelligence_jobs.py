@@ -3,7 +3,7 @@
 The database row is the source of truth for business state; the queue
 transport (Redis in production, inline in tests/local dev) is only the
 execution mechanism. The API creates the durable record, enqueues, and
-returns immediately — workers do the rest.
+returns immediately; workers do the rest.
 """
 
 from __future__ import annotations

@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # Bounded retries for invalid tool arguments / failed tool calls.
     max_tool_retries: int = 2
     # Strict grounding: the agent may not state operational facts unless a
-    # tool call actually succeeded. Default ON — fabricated data is worse
+    # tool call actually succeeded. Default ON: fabricated data is worse
     # than an honest failure.
     strict_tool_grounding: bool = True
 

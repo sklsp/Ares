@@ -56,7 +56,7 @@ def validate_production() -> list[str]:
 
     if settings.llm_provider == "test":
         problems.append(
-            "LLM_PROVIDER=test is the deterministic CI provider — it is not a "
+            "LLM_PROVIDER=test is the deterministic CI provider. It is not a "
             "live model and must not serve production traffic"
         )
 

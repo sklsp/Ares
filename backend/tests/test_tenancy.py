@@ -1,7 +1,7 @@
 """Cross-tenant isolation: the highest-priority security guarantee.
 
 Organization A's authenticated users must never read, modify, or even
-confirm the existence of Organization B's resources — including by ID
+confirm the existence of Organization B's resources, including by ID
 manipulation. Cross-tenant reads return 404 (not 403) to avoid existence
 leaks.
 """

@@ -1,7 +1,7 @@
 """Tool execution grounding.
 
 Guarantees the agent cannot present fabricated operational facts after a
-tool failure. The application — not the prompt — enforces this.
+tool failure. The application enforces this, not the prompt.
 
 State machine per tool call:
 

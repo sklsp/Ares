@@ -55,7 +55,7 @@ class DeterministicProvider(LLMProvider):
     def status(self) -> ProviderStatus:
         return ProviderStatus(
             available=True,
-            provider=f"{self.name} (test/deterministic — not a live model)",
+            provider=f"{self.name} (test/deterministic, not a live model)",
             model=self.model,
             detail="Deterministic CI provider; set LLM_PROVIDER=ollama for real inference.",
         )

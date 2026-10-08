@@ -17,7 +17,7 @@ router = APIRouter(tags=["system"])
 
 @router.get("/live", response_model=dict)
 def liveness() -> dict:
-    """Liveness: the process is running. No dependency checks — a hung
+    """Liveness: the process is running. No dependency checks: a hung
     database must not cause the orchestrator to kill this pod."""
     return {"status": "alive", "version": __version__}
 

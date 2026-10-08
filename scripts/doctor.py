@@ -82,7 +82,7 @@ def check_port_free(report: Report, port: int, label: str) -> None:
         sock.settimeout(0.5)
         in_use = sock.connect_ex(("127.0.0.1", port)) == 0
     if in_use:
-        report.add(f"Port {port} ({label})", None, "in use — service may already be running",
+        report.add(f"Port {port} ({label})", None, "in use, service may already be running",
                    "Stop the existing process or change the port")
     else:
         report.add(f"Port {port} ({label})", True, "available")
@@ -126,7 +126,7 @@ def check_ollama(report: Report) -> None:
             report.add("Ollama", None, f"reachable but model '{model}' not pulled",
                        f"ollama pull {model}")
     except Exception:  # noqa: BLE001
-        report.add("Ollama", None, "unreachable — AI agent features unavailable",
+        report.add("Ollama", None, "unreachable, AI agent features unavailable",
                    "Install Ollama and run: ollama pull llama3.2 (optional for development)")
 
 
@@ -236,7 +236,7 @@ def classify(report: Report) -> str:
     dev_blockers = [c for c in report.failures
                     if c.name not in {"Docker", "Docker Compose", "Redis daemon"}]
     if dev_blockers:
-        return "NOT READY — resolve FAIL items above"
+        return "NOT READY: resolve FAIL items above"
     if docker_ok and redis_ok:
         return "PRODUCTION VERIFICATION POSSIBLE on this machine"
     blocked = []
@@ -244,7 +244,7 @@ def classify(report: Report) -> str:
         blocked.append("Docker")
     if not redis_ok:
         blocked.append("Redis")
-    return f"DEVELOPMENT READY — production verification BLOCKED by missing {', '.join(blocked)}"
+    return f"DEVELOPMENT READY: production verification BLOCKED by missing {', '.join(blocked)}"
 
 
 def main() -> int:

@@ -37,7 +37,7 @@ export default function AdminPage() {
 
   // Client-side convenience only: the server enforces the admin role.
   // setState here is conditional UI state derived from identity, not a
-  // cascading render — the rule cannot see the guard.
+  // cascading render; the rule cannot see the guard.
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => { if (user && user.role !== "admin") setForbidden(true); }, [user]);
   useEffect(() => { if (user?.role === "admin") void load(); }, [load, user]);

@@ -27,7 +27,7 @@ def record(name: str, ok: bool | None, detail: str = "") -> None:
     status = {True: "PASS", False: "FAIL", None: "SKIP"}[ok]
     results.append((name, status, detail))
     symbol = {"PASS": "PASS", "FAIL": "FAIL", "SKIP": "SKIP"}[status]
-    print(f"[{symbol}] {name}" + (f" — {detail}" if detail else ""))
+    print(f"[{symbol}] {name}" + (f": {detail}" if detail else ""))
 
 
 def main() -> int:
@@ -45,7 +45,7 @@ def main() -> int:
         print(f"Transport: real Redis at {url}")
     else:
         backend = transport.InlineQueueBackend()
-        print("Transport: inline (no REDIS_URL) — set --redis to test a real daemon")
+        print("Transport: inline (no REDIS_URL). Set --redis to test a real daemon")
 
     transport.set_backend(backend)
 

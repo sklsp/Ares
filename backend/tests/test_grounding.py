@@ -54,7 +54,7 @@ def test_invalid_arguments_exhausted_produces_safe_failure(db, llm):
         tool_call("get_products", limit=500),
         tool_call("get_products", limit=999),
         tool_call("get_products", limit=1000),
-        # The model then tries to answer anyway — this MUST be blocked.
+        # The model then tries to answer anyway. This MUST be blocked.
         answer("You have 987 products in your catalog."),
     )
     run = run_agent(db, "How many products do I have?")
