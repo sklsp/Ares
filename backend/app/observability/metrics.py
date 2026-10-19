@@ -68,11 +68,9 @@ def render() -> str:
             lines.append(_metric_line(key, value))
         for key, values in sorted(_histograms.items()):
             base, label_part = _split_key(key)
-            cumulative = 0.0
             for bucket in BUCKETS:
                 count = sum(1 for v in values if v <= bucket)
                 lines.append(_metric_line(f"{base}_bucket{label_part[:-1] + ',' if label_part else '{'}le=\"{bucket}\"}}", float(count)))
-                cumulative = float(count)
             lines.append(_metric_line(f"{base}_count{label_part}", float(len(values))))
             lines.append(_metric_line(f"{base}_sum{label_part}", float(sum(values))))
     return "\n".join(lines) + "\n"

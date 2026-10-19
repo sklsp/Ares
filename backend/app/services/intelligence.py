@@ -98,11 +98,15 @@ def run_investigation(db: Session, job: ResearchJob, *, start_urls: list[str] | 
         )
     )
     try:
-        job.status = "RUNNING"; job.stage = "discovering sources"; job.started_at = utcnow(); db.commit()
+        job.status = "RUNNING"
+        job.stage = "discovering sources"
+        job.started_at = utcnow()
+        db.commit()
         urls = list(dict.fromkeys(start_urls or search.search(job.query, limit=8)))
         if not urls:
             raise RuntimeError("No public sources were discovered for this query")
-        job.stats = {"domains_discovered": len({urlparse(url).netloc for url in urls}), "pages_discovered": len(urls), "pages_crawled": 0, "products_discovered": 0, "opportunities_found": 0}; db.commit()
+        job.stats = {"domains_discovered": len({urlparse(url).netloc for url in urls}), "pages_discovered": len(urls), "pages_crawled": 0, "products_discovered": 0, "opportunities_found": 0}
+        db.commit()
         results = crawler.crawl(urls)
         products: list[ExternalProduct] = []
         for result in results:
@@ -116,12 +120,14 @@ def run_investigation(db: Session, job: ResearchJob, *, start_urls: list[str] | 
             store = _upsert_store(db, domain, job.query, _store_name(result, domain),
                                   organization_id=job.organization_id)
             store.platform = "shopify" if "shopify" in str(result.metadata).lower() else store.platform
-            store.last_crawled_at = utcnow(); store.crawl_status = "ok"
+            store.last_crawled_at = utcnow()
+            store.crawl_status = "ok"
             for extracted in result.products:
                 extracted.url = extracted.url or result.url
                 products.append(_upsert_product(db, store, extracted, utcnow()))
             db.commit()
-        job.stage = "scoring opportunities"; db.commit()
+        job.stage = "scoring opportunities"
+        db.commit()
         grouped: dict[str, list[ExternalProduct]] = defaultdict(list)
         for product in products:
             if product.normalized_name:
@@ -148,10 +154,19 @@ def run_investigation(db: Session, job: ResearchJob, *, start_urls: list[str] | 
             "products_discovered": len(products),
             "opportunities_found": found,
         }
-        job.status = "COMPLETED"; job.stage = "complete"; job.completed_at = utcnow(); job.result = {"opportunities_found": found}; db.commit()
+        job.status = "COMPLETED"
+        job.stage = "complete"
+        job.completed_at = utcnow()
+        job.result = {"opportunities_found": found}
+        db.commit()
         return {"pages": len(results), "products": len(products), "opportunities": found}
     except Exception as exc:
-        job.status = "FAILED"; job.stage = "failed"; job.error = str(exc); job.completed_at = utcnow(); db.commit(); raise
+        job.status = "FAILED"
+        job.stage = "failed"
+        job.error = str(exc)
+        job.completed_at = utcnow()
+        db.commit()
+        raise
     finally:
         if hasattr(search, "close"):
             search.close()

@@ -16,7 +16,7 @@ def test_tracing_disabled_by_default_is_a_noop():
 
 
 def test_spans_are_recorded_when_enabled():
-    opentelemetry = pytest.importorskip("opentelemetry.sdk.trace")
+    pytest.importorskip("opentelemetry.sdk.trace")
 
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
