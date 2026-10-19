@@ -91,3 +91,30 @@ judged with an eval set of 30 tasks whose own oracle must score 30 out of 30.
 **Why:** The eval set is data that drifts as tools change; validating it in code makes the suite fail on unknown tool names, duplicate ids or approval tasks that never touch update_product instead of silently scoring them wrong.
 **Trade-off:** Validation only checks structure: nothing proves an oracle answer still matches the seeded store facts, so a stale expected phrase passes loading and only fails when the task is actually run.
 **Where:** `backend/app/evals/tasks.py` (load_tasks), `backend/tests/test_eval_tasks.py`.
+
+## Questions people ask
+
+### What stops the agent from changing prices on its own?
+
+Each tool declares whether it is a read or a write, and `update_product` is the only catalog writer: it carries `requires_approval=True`, so the engine never executes it directly. When a run reaches that call, `_drain_pending` in `backend/app/agent/engine.py` stores an ApprovalRequest row, parks the run as WAITING_FOR_APPROVAL and returns without touching the data. The write happens only after a human calls POST /approvals/{id}/approve; a rejection is recorded as a step and the tool never fires. I chose one engine-level gate over per-tool checks so that no prompt or model output can bypass it.
+
+### What happens when the model keeps calling tools in a loop?
+
+The loop is bounded by three limits from `backend/app/config.py`: agent_max_iterations=8, agent_max_tool_calls=20 and agent_timeout_seconds=240. When any of them trips, `_wrap_up` in `backend/app/agent/engine.py` asks the model for one final summary without tools and stops, so the run ends with an answer instead of a cut-off transcript. I would raise these limits per deployment rather than remove them: each eval task's max_tool_calls shows how many calls that task legitimately needs.
+
+### How do you test an agent without a model?
+
+I chose two layers, neither of which needs a model server. The unit suite scripts a FakeLLM in `backend/tests/fakes.py` to queue exact tool calls and answers, so all 211 backend tests run offline. For end-to-end behavior I built the eval harness: `python -m app.evals --provider oracle` replays each task's own script through the real engine and must score 30/30, while `--provider lazy` (no tools, one fixed answer) scores 0/30. The oracle run is a CI gate in `.github/workflows/ci.yml`, so every push re-proves the harness.
+
+### How would you know whether a real model is good enough?
+
+I would run it through the same 30-task harness with `python -m app.evals --provider ollama --model <name>` and read the per-category table in the report. The oracle's 30/30 is the ceiling the harness can reach, and lazy's 0/30 is the floor an unhelpful answer must not clear; a model between them passes only as many tasks as its answers actually satisfy. I would treat anything below the oracle as a list of concrete failures to read in `backend/evals/results/`, not a single score. No real-model run is committed yet, so there is no number to quote for any live model.
+
+### How do you defend against prompt injection from crawled pages?
+
+I chose two layers because neither alone is enough. The system prompt in `backend/app/agent/prompts.py` tells the agent to treat scraped text as untrusted data, never as instructions. Structurally, the crawler turns pages into ExternalProduct rows through `backend/app/intelligence/extraction.py`, so free page text does not ride along in the conversation where it could steer tool calls. The honest limit: a model that obeys page instructions over the system prompt would still act, because no code check blocks a call merely because crawled text suggested it.
+
+### Why SQLite by default, and what changes with PostgreSQL?
+
+I chose SQLite as the default in `backend/app/config.py` so that pytest and a quick local run need no server; Postgres is the target database behind docker compose. With PostgreSQL the JSON columns become JSONB through the variant in `backend/app/db/base.py`, foreign keys are enforced natively instead of through PRAGMA, and the check_same_thread connect argument goes away. I would move to Postgres when several runs write at once: SQLite serializes writers on one file lock.
+
