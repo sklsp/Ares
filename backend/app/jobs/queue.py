@@ -13,9 +13,10 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import func, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -117,9 +118,12 @@ def claim_next(db: Session, worker_id: str) -> ResearchJob | None:
         .limit(10)
     ).scalars().all()
     for job in candidates:
-        updated = db.execute(
-            update_job_status_stmt(job.id, JobStatus.RUNNING, JobStatus.QUEUED,
-                                   worker_id=worker_id)
+        # Session.execute is typed to return Result; DML statements yield a
+        # CursorResult at runtime, which is what carries rowcount.
+        updated = cast(
+            CursorResult[Any],
+            db.execute(update_job_status_stmt(job.id, JobStatus.RUNNING, JobStatus.QUEUED,
+                                              worker_id=worker_id)),
         )
         db.commit()
         if updated.rowcount:

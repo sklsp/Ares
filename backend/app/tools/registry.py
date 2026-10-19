@@ -25,6 +25,9 @@ from app.schemas.domain import ToolInfo
 logger = get_logger(__name__)
 
 TInput = TypeVar("TInput", bound=BaseModel)
+# Module-level alias: inside ToolRegistry the method named `list` shadows the
+# builtin in annotations, so name the spec-list type here where it resolves.
+LLMSpecList = list[dict[str, Any]]
 
 
 class ToolAccess(StrEnum):
@@ -158,7 +161,7 @@ class ToolRegistry:
             tools = [t for t in tools if t.access is access]
         return tools
 
-    def llm_specs(self) -> list[dict[str, Any]]:
+    def llm_specs(self) -> LLMSpecList:
         return [t.to_llm_spec() for t in self.list()]
 
     def __len__(self) -> int:

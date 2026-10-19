@@ -50,7 +50,7 @@ def get_tenant(request: Request, db: DbSession,
     return TenantContext(user, user.organization_id)
 
 
-def scoped_or_404(tenant: TenantContext, db: Session, model: type, resource_id: int):
+def scoped_or_404(tenant: TenantContext, db: Session, model: type[Any], resource_id: int):
     """Fetch one tenant-scoped row or raise 404 without existence leaks."""
     query = tenant.scoped(select(model).where(model.id == resource_id))
     row = db.execute(query).scalars().first()

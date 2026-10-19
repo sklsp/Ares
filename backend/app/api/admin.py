@@ -91,8 +91,8 @@ def update_user(
     user_id: int,
     payload: UpdateUserRequest,
     db: DbSession,
+    actor: Annotated[User, Depends(require_role(Role.ADMIN.value))],
     tenant: TenantContext = Depends(get_tenant),
-    actor: Annotated[User, Depends(require_role(Role.ADMIN.value))] = None,
 ) -> User:
     target = _target_scoped(tenant, db, user_id)
 

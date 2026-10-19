@@ -192,8 +192,8 @@ class InlineQueueBackend(QueueBackend):
 
     def enqueue(self, job_type: str, payload: dict[str, Any], *, job_id: str | None = None,
                 delay_seconds: float = 0) -> str:
-        entry = {"id": job_id or uuid.uuid4().hex, "type": job_type,
-                 "payload": payload, "worker_id": "inline"}
+        entry: dict[str, Any] = {"id": job_id or uuid.uuid4().hex, "type": job_type,
+                                 "payload": payload, "worker_id": "inline"}
         handler = get_handler(job_type)
         if handler is not None:
             handler(payload)

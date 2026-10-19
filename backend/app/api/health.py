@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from sqlalchemy import text
 
 from app import __version__
@@ -23,7 +23,7 @@ def liveness() -> dict:
 
 
 @router.get("/ready", response_model=dict)
-def readiness(db: DbSession) -> dict:
+def readiness(db: DbSession) -> dict | Response:
     """Readiness: the process can actually serve requests. Fails (503) when
     a required dependency is unavailable so traffic is routed elsewhere."""
     try:
@@ -32,8 +32,6 @@ def readiness(db: DbSession) -> dict:
     except Exception:  # noqa: BLE001
         database_ok = False
     if not database_ok:
-        from fastapi import Response
-
         return Response(status_code=503, content='{"status": "unready", "database": false}', media_type="application/json")
     return {"status": "ready", "database": True, "version": __version__}
 

@@ -6,6 +6,8 @@ exists for changes the *agent* proposes.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import DbSession, Provider
@@ -22,7 +24,7 @@ class ProductWithQuality(ProductDetail):
 
 
 class ProductQualityPage(ProductPage):
-    items: list[ProductWithQuality]
+    items: Sequence[ProductWithQuality]
     categories: list[str]
 
 

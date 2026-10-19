@@ -410,6 +410,8 @@ class AgentEngine:
 
         product_id = call.arguments.get("product_id")
         fields = {k: v for k, v in call.arguments.items() if k != "product_id" and v is not None}
+        if product_id is None:
+            return {"arguments": call.arguments}, f"Update product {product_id}"
         try:
             detail = self.provider.get_product(int(product_id))
         except (ProviderError, TypeError, ValueError):
