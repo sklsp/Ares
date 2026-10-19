@@ -76,3 +76,56 @@ sequenceDiagram
 3. `backend/app/tools/registry.py` execute() is the single execution path for every tool; llm_specs() feeds its schemas to the model.
 4. `backend/app/agent/engine.py` _drain_pending runs READ tools at once through _execute and records each outcome with _finish_call.
 5. `backend/app/db/models.py` ApprovalRequest rows carry PENDING, APPROVED or REJECTED status plus the stored result of an approved call.
+
+## Market intelligence
+
+```mermaid
+flowchart TD
+    A["research_market tool queues a ResearchJob (create_job, idempotent per tenant)"] --> B["Worker claims it atomically: QUEUED -> RUNNING (claim_next)"]
+    B --> C["Discovery stage: DuckDuckGoProvider.search or provided start_urls"]
+    C --> D{"Any URLs?"}
+    D -- no --> X["Job FAILED with the error recorded"]
+    D -- yes --> E["Crawl loop under a CrawlPolicy budget (max_pages, max_depth, delay_seconds)"]
+    E --> F["Next URL: public-address SSRF guard, then robots.txt check"]
+    F --> G{"Allowed?"}
+    G -- no --> H["Recorded as blocked; next queued URL"]
+    G -- yes --> I["Throttled GET with retries; extract_page parses JSON-LD first, OpenGraph fallback"]
+    I --> J["_upsert_store and _upsert_product persist the page's products (ProductSnapshot rows)"]
+    J --> K{"Same-origin links left within depth budget?"}
+    H --> E
+    K -- yes --> E
+    K -- "budgets exhausted" --> L["Scoring stage over all extracted products"]
+    L --> M["Group by normalized name; score = 35 + repetition x 35 + gap x 20 + price signal"]
+    M --> N["_opportunity stores Opportunity rows with source URLs and an evidence dict (observed vs inferred)"]
+    N --> O["Job COMPLETED; list_opportunities returns them ranked by score"]
+```
+
+1. `backend/app/tools/intelligence.py` research_market calls create_job and returns a job id; list_opportunities reads the results back.
+2. `backend/app/services/intelligence_jobs.py` execute_job claims the row, drives run_investigation, and records failures with retry backoff.
+3. `backend/app/intelligence/discovery.py` DuckDuckGoProvider.search returns public result URLs for a query; it only discovers, never verifies.
+4. `backend/app/intelligence/crawler.py` ResponsibleCrawler enforces the SSRF guard, robots.txt, per-host throttling and page/depth budgets; extract_page runs on every fetched body.
+5. `backend/app/services/intelligence.py` run_investigation upserts stores and products, then scores clusters into Opportunity rows with source URLs and an evidence dict that separates observed facts from inferences.
+
+## Jobs and workers
+
+1. `backend/app/jobs/queue.py` is a durable database-backed queue: enqueue() dedupes by idempotency signature per tenant, claim_next() atomically moves QUEUED to RUNNING via a guarded UPDATE, and record_failure() requeues with backoff up to 3 attempts before FAILED.
+2. `backend/app/jobs/transport.py` is only the delivery mechanism behind QueueBackend: RedisQueueBackend gives at-least-once delivery with stale reclaim in production; InlineQueueBackend runs handlers synchronously for tests and embedded local dev.
+3. `backend/app/services/intelligence_jobs.py` registers the research handler, keeps execute_job idempotent against duplicate delivery, and requeues jobs orphaned by a crash via recover_stale_jobs at startup.
+4. Agent runs are not in this queue: `backend/app/agent/runner.py` hands them to an in-process worker pool instead, with the same durable-row principle (the AgentRun row survives pauses).
+
+## Auth and roles
+
+Roles form an ordered hierarchy (ROLE_LEVEL) enforced server-side on every request via require_role; a role can do anything its juniors can. Public sign-up creates viewers only; only an admin caller may create accounts with another role. Sessions are random tokens stored as SHA-256 hashes with a 12 hour TTL, and passwords use scrypt.
+
+| Role | Level | What it may do |
+|---|---|---|
+| viewer | 0 | Sign up publicly, log in, and use authenticated endpoints that no higher role gates. |
+| analyst | 1 | Everything a viewer can do; no endpoint currently requires exactly this level (it sits between viewer and manager for future gating). |
+| manager | 2 | Everything below plus read the audit log (/auth/audit is gated by require_role(manager)). |
+| admin | 3 | Everything below plus manage users in their own organization: list, change roles or deactivate with last-active-admin protection, and view organizations; only admins can create non-viewer accounts. |
+
+## More
+
+- [Design decisions](DESIGN.md)
+- [Security model](SECURITY.md)
+- [Evals](EVALS.md)
