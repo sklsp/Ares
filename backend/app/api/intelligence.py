@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, select
 
-from app.api.auth import current_user
 from app.api.deps import DbSession
 from app.api.tenancy import TenantContext, get_tenant, scoped_or_404
 from app.config import settings
-from app.db.models import ExternalProduct, ExternalStore, Opportunity, OpportunityEvidence, ResearchJob
+from app.db.models import (
+    ExternalProduct,
+    ExternalStore,
+    Opportunity,
+    OpportunityEvidence,
+    ResearchJob,
+)
 from app.schemas.intelligence import OpportunityOut, ResearchJobOut, ResearchJobRequest
-from app.services import intelligence as intelligence_service
 from app.services.intelligence_jobs import cancel_job, create_job
 from app.services.rate_limit import rate_limit
 

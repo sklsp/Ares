@@ -43,7 +43,7 @@ class FakeLLM(LLMProvider):
         self.available = available
         self.fallback = answer("Done.")
 
-    def script(self, *responses: LLMResponse) -> "FakeLLM":
+    def script(self, *responses: LLMResponse) -> FakeLLM:
         self.queue.extend(responses)
         return self
 

@@ -7,6 +7,7 @@ controls `limit`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Literal
 
@@ -64,7 +65,9 @@ class ProductListResult(BaseModel):
 class ProductPage(BaseModel):
     """REST pagination envelope (not used by tools)."""
 
-    items: list[ProductDetail]
+    # Sequence (covariant) so subclasses can narrow the item type; pydantic
+    # validates and stores it as a list either way.
+    items: Sequence[ProductDetail]
     total: int
     limit: int
     offset: int

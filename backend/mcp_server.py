@@ -52,8 +52,8 @@ TOOL_NAMES = (
     "update_product",
 )
 
-READ_ONLY = ToolAnnotations(readOnlyHint=True)
-DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True)
+READ_ONLY = ToolAnnotations(read_only_hint=True)
+DESTRUCTIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True)
 
 
 @contextmanager

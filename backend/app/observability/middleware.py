@@ -29,7 +29,8 @@ class instrument_requests(BaseHTTPMiddleware):
         request.state.correlation_id = correlation_id
 
         method = request.method
-        path = request.scope.get("route").path if request.scope.get("route") else request.url.path
+        route = request.scope.get("route")
+        path = route.path if route else request.url.path
         span_cm = get_tracer().start_as_current_span(
             f"{method} {path}", attributes={"http.method": method, "http.route": path,
                                              "correlation.id": correlation_id}

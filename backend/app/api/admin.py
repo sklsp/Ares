@@ -17,10 +17,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 
-from app.api.auth import current_user, require_role
+from app.api.auth import require_role
 from app.api.deps import DbSession
 from app.api.tenancy import TenantContext, get_tenant
-from app.db.identity import Organization, Session as DbSessionTable, User
+from app.db.identity import Organization, User
+from app.db.identity import Session as DbSessionTable
 from app.db.models import utcnow
 from app.services import auth as auth_service
 from app.services.auth import Role
@@ -90,8 +91,8 @@ def update_user(
     user_id: int,
     payload: UpdateUserRequest,
     db: DbSession,
+    actor: Annotated[User, Depends(require_role(Role.ADMIN.value))],
     tenant: TenantContext = Depends(get_tenant),
-    actor: Annotated[User, Depends(require_role(Role.ADMIN.value))] = None,
 ) -> User:
     target = _target_scoped(tenant, db, user_id)
 

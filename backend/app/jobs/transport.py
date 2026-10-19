@@ -17,7 +17,8 @@ import json
 import time
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from app.logging_config import get_logger
 
@@ -191,8 +192,8 @@ class InlineQueueBackend(QueueBackend):
 
     def enqueue(self, job_type: str, payload: dict[str, Any], *, job_id: str | None = None,
                 delay_seconds: float = 0) -> str:
-        entry = {"id": job_id or uuid.uuid4().hex, "type": job_type,
-                 "payload": payload, "worker_id": "inline"}
+        entry: dict[str, Any] = {"id": job_id or uuid.uuid4().hex, "type": job_type,
+                                 "payload": payload, "worker_id": "inline"}
         handler = get_handler(job_type)
         if handler is not None:
             handler(payload)

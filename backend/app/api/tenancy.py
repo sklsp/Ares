@@ -13,8 +13,8 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import DbSession
 from app.api.auth import current_user
+from app.api.deps import DbSession
 from app.db.identity import User
 
 
@@ -50,7 +50,7 @@ def get_tenant(request: Request, db: DbSession,
     return TenantContext(user, user.organization_id)
 
 
-def scoped_or_404(tenant: TenantContext, db: Session, model: type, resource_id: int):
+def scoped_or_404(tenant: TenantContext, db: Session, model: type[Any], resource_id: int):
     """Fetch one tenant-scoped row or raise 404 without existence leaks."""
     query = tenant.scoped(select(model).where(model.id == resource_id))
     row = db.execute(query).scalars().first()

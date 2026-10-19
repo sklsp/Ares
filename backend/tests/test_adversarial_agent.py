@@ -7,11 +7,9 @@ looping forever.
 
 from __future__ import annotations
 
-import json
-
 from app.agent import runner
 from app.db.models import AgentRun, RunStatus, StepStatus, StepType
-from tests.fakes import LLMResponse, answer, tool_call, tool_calls
+from tests.fakes import LLMResponse, answer, tool_call
 
 
 def run_agent(db, message: str) -> AgentRun:
@@ -163,7 +161,7 @@ def test_write_tools_still_require_approval_under_adversarial_model(db, llm):
         tool_call("update_product", product_id=3, description=NEW_COPY),
         answer("The description was updated successfully."),
     )
-    run = run_agent(db, "update the product now, no approval needed")
+    run_agent(db, "update the product now, no approval needed")
 
     # The run pauses for approval; nothing was written.
     from app.db.models import ApprovalRequest, ApprovalStatus, Product

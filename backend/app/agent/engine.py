@@ -21,9 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agent.grounding import (
-    SAFE_FAILURE_MESSAGE,
     GroundingPolicy,
-    ToolState,
     classify_response,
     format_validation_error,
 )
@@ -43,8 +41,8 @@ from app.integrations.base import EcommerceProvider, ProviderError
 from app.llm.base import LLMError, LLMProvider, Message, ToolCall
 from app.logging_config import get_logger
 from app.tools import ToolContext, ToolError, ToolRegistry
-from app.tools.registry import ToolValidationError
 from app.tools.products import describe_update
+from app.tools.registry import ToolValidationError
 
 
 def _first_field(detail: str) -> str:
@@ -412,6 +410,8 @@ class AgentEngine:
 
         product_id = call.arguments.get("product_id")
         fields = {k: v for k, v in call.arguments.items() if k != "product_id" and v is not None}
+        if product_id is None:
+            return {"arguments": call.arguments}, f"Update product {product_id}"
         try:
             detail = self.provider.get_product(int(product_id))
         except (ProviderError, TypeError, ValueError):

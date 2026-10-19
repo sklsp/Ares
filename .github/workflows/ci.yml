@@ -20,10 +20,16 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: python -m ruff check app tests mcp_server.py
+      - name: Typecheck
+        run: python -m mypy
       - name: Run tests
-        run: python -m pytest
+        run: python -m pytest --cov=app --cov-report=term --cov-fail-under=82
         env:
           TMPDIR: ${{ runner.temp }}
+      - name: Agent eval (oracle must be perfect)
+        run: python -m app.evals --provider oracle --min-pass 1.0
 
   frontend:
     runs-on: ubuntu-latest

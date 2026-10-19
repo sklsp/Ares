@@ -14,6 +14,15 @@ An AI e-commerce operations console. You give it a task in plain language ("impr
 - **Observability**: an ordered `agent_steps` trail per run, SSE event stream, Prometheus-style counters at `/metrics`, correlation IDs on responses.
 - **MCP server** over stdio exposing the same tool registry (`python -m mcp_server`).
 
+## Engineering
+
+- **Evaluated:** 30 agent tasks with an oracle that must score 30/30 and a lazy baseline that scores 0/30. Run them
+  against your own model: see [docs/EVALS.md](docs/EVALS.md).
+- **Checked in CI:** ruff, mypy, the backend tests with a coverage floor, the oracle eval, the frontend lint,
+  typecheck and build, and Playwright smoke tests.
+- **Documented:** [architecture](docs/ARCHITECTURE.md), [security model](docs/SECURITY.md) and
+  [design decisions and trade-offs](docs/DESIGN.md).
+
 ## Tech used
 
 Backend: Python 3.11+, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, SQLite by default (PostgreSQL via `DATABASE_URL`), httpx, pytest.
@@ -49,7 +58,8 @@ Open http://localhost:3000. On Windows, `scripts/start.ps1` does both halves and
 ## Tests
 
 ```bash
-cd backend && .venv/Scripts/python -m pytest     # 180 tests (178 passed, 2 skipped), scripted LLM provider, no Ollama or network needed
+cd backend && .venv/Scripts/python -m pytest     # 213 tests (211 passed, 2 skipped), scripted LLM provider, no Ollama or network needed
+cd backend && .venv/Scripts/python -m app.evals --provider oracle   # agent eval harness, no model needed
 npm run lint && npx tsc --noEmit && npm run build
 npm test                                         # Playwright smoke, needs a running seeded app
 ```

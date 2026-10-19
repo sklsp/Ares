@@ -97,7 +97,7 @@ def test_admin_cannot_modify_cross_tenant_user(client, org_with_users):
 
 
 def test_cross_tenant_404_is_generic(client, org_with_users):
-    missing = client.get("/admin/users/999999", headers=org_with_users["admin_headers"])
+    client.get("/admin/users/999999", headers=org_with_users["admin_headers"])
     # PATCH is the only detail route; verify via PATCH on a nonexistent id.
     missing_patch = client.patch("/admin/users/999999", json={"role": "viewer"},
                                  headers=org_with_users["admin_headers"])

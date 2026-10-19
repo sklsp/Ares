@@ -6,7 +6,7 @@ trail (agent_runs, agent_steps, approval_requests).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -25,12 +25,12 @@ from app.db.base import Base, JSONType
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def as_utc(value: datetime) -> datetime:
     """SQLite hands back naive datetimes; normalise before arithmetic."""
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 class RunStatus(StrEnum):
@@ -85,10 +85,10 @@ class Product(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
-    inventory: Mapped["Inventory | None"] = relationship(
+    inventory: Mapped[Inventory | None] = relationship(
         back_populates="product", uselist=False, cascade="all, delete-orphan"
     )
-    orders: Mapped[list["Order"]] = relationship(
+    orders: Mapped[list[Order]] = relationship(
         back_populates="product", cascade="all, delete-orphan"
     )
 
@@ -169,12 +169,12 @@ class AgentRun(Base):
         DateTime(timezone=True), nullable=True
     )
 
-    steps: Mapped[list["AgentStep"]] = relationship(
+    steps: Mapped[list[AgentStep]] = relationship(
         back_populates="run",
         cascade="all, delete-orphan",
         order_by="AgentStep.step_number",
     )
-    approvals: Mapped[list["ApprovalRequest"]] = relationship(
+    approvals: Mapped[list[ApprovalRequest]] = relationship(
         back_populates="run",
         cascade="all, delete-orphan",
         order_by="ApprovalRequest.id",
@@ -279,7 +279,7 @@ class ExternalStore(Base):
     last_crawled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     crawl_status: Mapped[str] = mapped_column(String(24), default="discovered")
 
-    products: Mapped[list["ExternalProduct"]] = relationship(
+    products: Mapped[list[ExternalProduct]] = relationship(
         back_populates="store", cascade="all, delete-orphan"
     )
 
@@ -305,7 +305,7 @@ class ExternalProduct(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
     store: Mapped[ExternalStore] = relationship(back_populates="products")
-    snapshots: Mapped[list["ProductSnapshot"]] = relationship(
+    snapshots: Mapped[list[ProductSnapshot]] = relationship(
         back_populates="product", cascade="all, delete-orphan"
     )
 
@@ -348,7 +348,7 @@ class ResearchJob(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    opportunities: Mapped[list["Opportunity"]] = relationship(
+    opportunities: Mapped[list[Opportunity]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
 

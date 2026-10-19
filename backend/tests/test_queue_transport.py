@@ -113,7 +113,7 @@ def test_failed_jobs_reach_dead_letter_after_max_attempts(backend):
     register_handler("always-fails", failing_handler)
 
     # Drive the same ladder the Worker.run loop uses.
-    from app.worker import MAX_ATTEMPTS, BACKOFF_BASE_SECONDS
+    from app.worker import BACKOFF_BASE_SECONDS, MAX_ATTEMPTS
 
     backend.enqueue("always-fails", {})
     entry = backend.claim("w", timeout_seconds=0)

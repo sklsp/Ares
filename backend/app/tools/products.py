@@ -45,7 +45,7 @@ class GetProductInput(BaseModel):
     sku: str = Field(default="", description="Product SKU, used when product_id is not known.")
 
     @model_validator(mode="after")
-    def one_identifier(self) -> "GetProductInput":
+    def one_identifier(self) -> GetProductInput:
         if not self.product_id and not self.sku:
             raise ValueError("provide either product_id or sku")
         return self
@@ -67,7 +67,7 @@ class UpdateProductInput(BaseModel):
     status: str | None = Field(default=None, description="active, draft or archived.")
 
     @model_validator(mode="after")
-    def at_least_one_change(self) -> "UpdateProductInput":
+    def at_least_one_change(self) -> UpdateProductInput:
         if not any(
             v is not None for v in (self.title, self.description, self.price, self.category, self.status)
         ):
