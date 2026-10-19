@@ -67,7 +67,7 @@ def _resolve_caller(request: Request, db) -> User | MachineUser | None:
     return None
 
 
-def current_user(request: Request, db: DbSession) -> User:
+def current_user(request: Request, db: DbSession) -> User | MachineUser:
     """Resolve the caller: session token first, then the shared API key.
 
     Raises 401 when neither credential is valid or when neither is configured.
@@ -137,7 +137,7 @@ def register(payload: RegisterRequest, request: Request, db: DbSession) -> User:
     if existing is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
     # An admin's new user joins the admin's own organization; sign-ups join the default one.
-    if by_admin and caller.organization_id is not None:
+    if by_admin and caller is not None and caller.organization_id is not None:
         organization_id = caller.organization_id
     else:
         organization_id = auth_service.ensure_default_organization(db).id
@@ -151,7 +151,7 @@ def register(payload: RegisterRequest, request: Request, db: DbSession) -> User:
     db.commit()
     db.refresh(user)
     auth_service.audit(db, action="user.registered",
-                       actor_user_id=caller.id if by_admin else user.id,
+                       actor_user_id=(caller.id if by_admin and caller is not None else user.id),
                        organization_id=organization_id, resource=f"user:{user.id}",
                        detail={"role": user.role, "by_admin": by_admin})
     return user
@@ -203,7 +203,7 @@ def me(user: Annotated[User, Depends(current_user)]) -> dict:
 def list_audit(
     db: DbSession,
     limit: int = Query(default=50, ge=1, le=200),
-    user: Annotated[User, Depends(require_role(Role.MANAGER.value))] = None,
+    user: Annotated[User | None, Depends(require_role(Role.MANAGER.value))] = None,
 ) -> list[dict]:
     rows = db.execute(
         select(AuditLog).order_by(AuditLog.id.desc()).limit(limit)
