@@ -19,6 +19,8 @@ backend/.venv/
 
 # testing
 /coverage
+.coverage
+htmlcov/
 
 # next.js
 /.next/
