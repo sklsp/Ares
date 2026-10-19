@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Any, NoReturn
 
 from sqlalchemy.orm import Session
 
 from app.agent import runner as agent_runner
 from app.db.models import AgentRun, Product
-from app.evals.scoring import RunOutcome
+from app.evals.scoring import RunOutcome, TaskResult, score
 from app.evals.tasks import EvalTask
 from app.llm.base import LLMProvider
 from app.llm.factory import set_llm_override
@@ -90,3 +91,55 @@ def run_task(db: Session, task: EvalTask, provider: LLMProvider) -> RunOutcome:
             )
         finally:
             set_llm_override(None)
+
+
+@dataclass(slots=True)
+class SuiteReport:
+    """The score of one provider over a whole task file."""
+
+    name: str
+    provider: str
+    model: str
+    results: list[TaskResult]
+    by_category: dict[str, tuple[int, int]]  # category -> (passed, total), first-seen order
+    passed: int
+    total: int
+    pass_rate: float
+
+
+def run_suite(
+    db: Session,
+    tasks: list[EvalTask],
+    make_provider: Callable[[EvalTask], LLMProvider],
+    name: str,
+) -> SuiteReport:
+    """Seed once, then run and score every task in file order."""
+    seed_demo(db)
+    results: list[TaskResult] = []
+    provider_name = ""
+    model_name = ""
+    for index, task in enumerate(tasks):
+        provider = make_provider(task)
+        if index == 0:
+            provider_name, model_name = provider.name, provider.model
+        outcome = run_task(db, task, provider)
+        results.append(score(task, outcome, known_skus(db)))
+
+    by_category: dict[str, tuple[int, int]] = {}
+    for result in results:
+        passed_n, total_n = by_category.get(result.category, (0, 0))
+        by_category[result.category] = (passed_n + (1 if result.passed else 0), total_n + 1)
+
+    passed = sum(1 for result in results if result.passed)
+    total = len(results)
+    return SuiteReport(
+        name=name,
+        provider=provider_name,
+        model=model_name,
+        results=results,
+        by_category=by_category,
+        passed=passed,
+        total=total,
+        pass_rate=round(passed / total, 4) if total else 0.0,
+    )
+
