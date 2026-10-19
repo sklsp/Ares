@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.db.models import ResearchJob
-from app.schemas.intelligence import OpportunityOut
 from app.intelligence.crawler import CrawlPolicy, ResponsibleCrawler
 from app.intelligence.discovery import DuckDuckGoProvider
+from app.schemas.intelligence import OpportunityOut
 from app.services.intelligence import list_opportunities
 from app.services.intelligence_jobs import create_job
 from app.tools.registry import ToolAccess, ToolContext, ToolRegistry

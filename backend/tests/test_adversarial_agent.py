@@ -7,11 +7,9 @@ looping forever.
 
 from __future__ import annotations
 
-import json
-
 from app.agent import runner
 from app.db.models import AgentRun, RunStatus, StepStatus, StepType
-from tests.fakes import LLMResponse, answer, tool_call, tool_calls
+from tests.fakes import LLMResponse, answer, tool_call
 
 
 def run_agent(db, message: str) -> AgentRun:

@@ -13,8 +13,8 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import DbSession
 from app.api.auth import current_user
+from app.api.deps import DbSession
 from app.db.identity import User
 
 

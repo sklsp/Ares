@@ -3,21 +3,29 @@
 from __future__ import annotations
 
 import re
-from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.db.models import ExternalProduct, ExternalStore, Opportunity, OpportunityEvidence, Product, ProductSnapshot, ResearchJob
+from app.db.models import (
+    ExternalProduct,
+    ExternalStore,
+    Opportunity,
+    OpportunityEvidence,
+    Product,
+    ProductSnapshot,
+    ResearchJob,
+)
 from app.intelligence.crawler import CrawlPolicy, ResponsibleCrawler
 from app.intelligence.discovery import DuckDuckGoProvider, SearchProvider
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def normalize_name(value: str) -> str:

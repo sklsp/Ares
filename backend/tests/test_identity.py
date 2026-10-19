@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app.services.auth import (
     Role,
     create_session,
@@ -196,9 +194,9 @@ def test_create_user_command_refuses_a_short_password(monkeypatch):
 
 
 def test_machine_api_key_still_authenticates(monkeypatch):
-    from app.config import settings
     from fastapi.testclient import TestClient
 
+    from app.config import settings
     from app.main import app
 
     monkeypatch.setattr(settings, "api_key", "machine-key")

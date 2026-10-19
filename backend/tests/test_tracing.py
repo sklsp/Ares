@@ -6,7 +6,6 @@ import pytest
 
 
 def test_tracing_disabled_by_default_is_a_noop():
-    from app.config import Settings
     from app.observability import tracing
 
     assert tracing.configure_tracing.__doc__  # importable
@@ -20,11 +19,11 @@ def test_spans_are_recorded_when_enabled():
     opentelemetry = pytest.importorskip("opentelemetry.sdk.trace")
 
     from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
         InMemorySpanExporter,
     )
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
     provider = TracerProvider()
     exporter = InMemorySpanExporter()
@@ -50,7 +49,6 @@ def test_spans_are_recorded_when_enabled():
 
 def test_no_sensitive_values_in_span_helper_contract():
     """The helper passes through only what callers give it; document the rule."""
-    from app.observability import tracing
 
     # Callers must pass identifiers only, enforced by review and this contract test.
     allowed = {"job.id": 1, "organization.id": 2, "correlation.id": "abc"}

@@ -13,7 +13,6 @@ Never failed tool call -> invented answer.
 from __future__ import annotations
 
 from app.agent import runner
-from app.agent.grounding import GroundingPolicy, classify_response
 from app.db.models import AgentRun, RunStatus, StepStatus, StepType
 from tests.fakes import answer, tool_call
 

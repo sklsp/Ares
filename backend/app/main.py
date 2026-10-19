@@ -90,7 +90,7 @@ def create_app() -> FastAPI:
         return response
 
     @app.get("/metrics", include_in_schema=False)
-    def prometheus_metrics() -> "Response":
+    def prometheus_metrics() -> Response:
         from app.observability.metrics import render
 
         return Response(content=render(), media_type="text/plain; version=0.0.4")

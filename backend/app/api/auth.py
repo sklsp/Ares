@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -52,7 +52,7 @@ def _bearer_token(request: Request) -> str | None:
     return None
 
 
-def _resolve_caller(request: Request, db) -> "User | MachineUser | None":
+def _resolve_caller(request: Request, db) -> User | MachineUser | None:
     """The caller behind a Bearer session token or the shared API key, or None."""
     token = _bearer_token(request)
     if token:

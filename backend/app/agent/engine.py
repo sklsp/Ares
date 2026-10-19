@@ -21,9 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agent.grounding import (
-    SAFE_FAILURE_MESSAGE,
     GroundingPolicy,
-    ToolState,
     classify_response,
     format_validation_error,
 )
@@ -43,8 +41,8 @@ from app.integrations.base import EcommerceProvider, ProviderError
 from app.llm.base import LLMError, LLMProvider, Message, ToolCall
 from app.logging_config import get_logger
 from app.tools import ToolContext, ToolError, ToolRegistry
-from app.tools.registry import ToolValidationError
 from app.tools.products import describe_update
+from app.tools.registry import ToolValidationError
 
 
 def _first_field(detail: str) -> str:
