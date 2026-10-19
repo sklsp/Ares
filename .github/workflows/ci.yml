@@ -28,6 +28,8 @@ jobs:
         run: python -m pytest --cov=app --cov-report=term --cov-fail-under=82
         env:
           TMPDIR: ${{ runner.temp }}
+      - name: Agent eval (oracle must be perfect)
+        run: python -m app.evals --provider oracle --min-pass 1.0
 
   frontend:
     runs-on: ubuntu-latest
