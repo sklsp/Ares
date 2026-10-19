@@ -57,3 +57,37 @@ judged with an eval set of 30 tasks whose own oracle must score 30 out of 30.
 **Trade-off:** The interface only exposes what the engine needs: provider-specific features such as streaming or function-calling quirks have to be handled inside each provider rather than surfaced to callers.
 **Where:** `backend/app/llm/base.py` (LLMProvider), `backend/app/llm/factory.py` (build_llm_provider).
 
+### 6. A scripted FakeLLM in the tests, so the suite never needs a model
+
+**Decision:** The test suite drives the real agent engine with a scripted FakeLLM that returns queued responses in order; conftest installs it process-wide through set_llm_override, so no model server is ever started.
+**Why:** Agent behaviour such as tool chains, approval pauses and grounding rejections can be asserted deterministically, and failure modes like an unreachable model are testable by flipping one flag on the fake.
+**Trade-off:** The fake only replays what a test queues; it cannot catch a prompt that a real model would misread, so prompt quality still needs live runs to judge.
+**Where:** `backend/tests/fakes.py` (FakeLLM), `backend/tests/conftest.py`.
+
+### 7. Crawled text is evidence, never instructions
+
+**Decision:** The system prompt tells the agent to treat scraped text as untrusted data and never as instructions, and the pipeline keeps it that way by turning crawled pages into structured product records instead of passing free page text along in the conversation.
+**Why:** Crawled pages are controlled by whoever runs the shop being researched; if their words could steer the agent, a malicious product page could issue tool calls on its own.
+**Trade-off:** The guard is prompt-level plus structuring: no code check blocks a tool call merely because crawled text suggested it, so a model that obeys page instructions over the system prompt would still act.
+**Where:** `backend/app/agent/prompts.py` (system_prompt), `backend/app/intelligence/extraction.py`.
+
+### 8. An ordered step trail per run, used for the audit view and the event stream
+
+**Decision:** Every action of a run is appended as an AgentStep row with a per-run sequence number and committed as it happens; the run detail endpoint returns that trail for auditing, and the SSE stream polls the same table for new rows.
+**Why:** One append-only record serves two consumers at once: people reviewing what happened after the fact, and clients following along live without any in-memory state on the server.
+**Trade-off:** The stream is a database poll with a cursor on step id rather than a push channel, so event latency is bounded by the poll interval and each client holds its own cursor for the life of the connection.
+**Where:** `backend/app/agent/engine.py` (_record), `backend/app/api/agent.py` (_event_stream).
+
+### 9. A recovery path for small models that write tool calls as plain text
+
+**Decision:** When Ollama returns no structured tool calls but its message contains one, _recover_tool_call_from_text parses JSON blocks from the text and accepts a block whose tool name is in the registry; the recovered call replaces the text so the engine sees an ordinary tool decision.
+**Why:** Smaller local models often write the call as prose or a code fence instead of using the tool-call field, and recovering it keeps those models usable rather than failing the whole run.
+**Trade-off:** Recovery exists only in the Ollama provider: the same behaviour through an OpenAI-compatible backend is not recovered, and a block that names a real tool but carries bad arguments still goes through normal validation like any other call.
+**Where:** `backend/app/llm/ollama.py` (_recover_tool_call_from_text).
+
+### 10. Agent evals with an oracle script per task, so the eval set itself is tested
+
+**Decision:** Each of the 30 tasks in backend/evals/tasks.json records its expectations plus an oracle script (the ideal tool calls and answer), and load_tasks validates every task against the live tool registry before it can be used.
+**Why:** The eval set is data that drifts as tools change; validating it in code makes the suite fail on unknown tool names, duplicate ids or approval tasks that never touch update_product instead of silently scoring them wrong.
+**Trade-off:** Validation only checks structure: nothing proves an oracle answer still matches the seeded store facts, so a stale expected phrase passes loading and only fails when the task is actually run.
+**Where:** `backend/app/evals/tasks.py` (load_tasks), `backend/tests/test_eval_tasks.py`.
