@@ -118,3 +118,32 @@ I chose two layers because neither alone is enough. The system prompt in `backen
 
 I chose SQLite as the default in `backend/app/config.py` so that pytest and a quick local run need no server; Postgres is the target database behind docker compose. With PostgreSQL the JSON columns become JSONB through the variant in `backend/app/db/base.py`, foreign keys are enforced natively instead of through PRAGMA, and the check_same_thread connect argument goes away. I would move to Postgres when several runs write at once: SQLite serializes writers on one file lock.
 
+### How would you add a real Shopify store?
+I would implement a `ShopifyProvider` against the abstract interface in `backend/app/integrations/base.py`: its catalog, inventory and sales methods trade in Pydantic DTOs (`ProductDetail`, `InventoryItem`, `SalesSummary`) rather than ORM rows, so all 18 tools keep working unchanged. The only wiring change is `build_engine` in `backend/app/agent/runner.py`, which currently hardcodes `MockEcommerceProvider(db)`. I would read the Admin API token from environment settings and map Shopify's fields onto those DTOs at that boundary. The approval flow needs no change: `update_product` stays WRITE, so it still pauses for a human before touching anything.
+
+### Why no agent framework such as LangChain?
+I chose to write the loop myself because it is small enough to read in one sitting: `_loop` in `backend/app/agent/engine.py` is bounded by three limits and every state change goes through a named method. The only abstraction I keep is the `LLMProvider` interface in `backend/app/llm/base.py`, so swapping Ollama for an OpenAI-compatible backend is a config change, not a rewrite. A framework would add a dependency graph I could not audit line by line while the safety boundary - one field on each tool - does all the real work. My requirements list has ten packages and none of them orchestrate anything.
+
+### What happens when Ollama goes down in the middle of a run?
+The provider wraps any connection failure as `LLMUnavailableError` after its 120-second timeout (`llm_timeout_seconds` in `backend/app/config.py`). The engine catches it in `_loop` and calls `_fail`, so the run is stored with status FAILED, an error message on the row, and no pending tool calls left behind. I chose to fail honestly rather than retry: a model that was unreachable mid-run may have already changed nothing, and re-running tools blindly could double-apply a write. The SSE stream in `backend/app/api/agent.py` delivers the failure as its final event, so the UI shows why instead of hanging.
+
+### How does a run continue after an approval?
+Resolving an approval only flips a row - I kept that in `resolve` in `backend/app/services/approvals.py`, which sets APPROVED or REJECTED and commits, then the endpoint calls `submit_resume`. A worker picks the run up, `engine.resume` re-enters `_loop`, and `_drain_pending` finds the stored call's `approval_id`, sees it is resolved, and executes the tool through the same `_execute` path as any other call. The result is written back onto the ApprovalRequest row by `_store_approval_result`, appended to the conversation as a tool message, and the loop continues with whatever the model decides next. A rejection never executes: the model receives `A human rejected this change. Do not retry it.`
+
+### Where are the weak spots?
+I see three real ones from reading this codebase. The grounding gate in `backend/app/agent/grounding.py` blocks ungrounded answers by searching for digits, so a fabricated answer without numbers passes and the check cannot say which facts came from data. Progress reaches the browser by polling: `_event_stream` in `backend/app/api/agent.py` opens a fresh database session every 0.4 seconds per open stream, which multiplies load as more runs are watched at once. And if the process dies mid-run, nothing re-submits RUNNING agent rows: research jobs have `recover_stale_jobs` in `backend/app/services/intelligence_jobs.py`, but agent runs in `backend/app/agent/runner.py` have no equivalent.
+
+### How would this handle many runs at the same time?
+I chose a small fixed pool: four threads (`agent_max_workers=4` in `backend/app/config.py`) inside one process, each with its own database session, so four runs execute concurrently and the rest wait in the executor queue. The API never blocks on model work - POST /agent/run returns 202 after persisting the row. Beyond that I would move to PostgreSQL (the JSONB variant is already in `backend/app/db/base.py`) because SQLite serializes writers, raise agent_max_workers or run more replicas, and set REDIS_URL so the limiters in `backend/app/services/rate_limit.py` share one counter instead of one per process.
+
+## Numbers
+| What | Value |
+|---|---|
+| Backend tests (latest passed count) | 211 passed, 2 skipped |
+| Coverage (item 60) | 84% (gate N=82) |
+| Lint and type check | clean - ruff: all checks passed; mypy: no issues in 76 files |
+| Tools (count of registry) | 18 (17 READ, 1 WRITE) |
+| Eval tasks | 30 |
+| Oracle score | 30/30 (100.0%) |
+| Lazy score | 0/30 (0.0%) |
+
