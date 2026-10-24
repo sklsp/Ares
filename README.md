@@ -4,6 +4,20 @@
 
 An AI e-commerce operations console. You give it a task in plain language ("improve the three worst product descriptions"), and an LLM agent plans it, calls tools against your catalog, and pauses for human approval before any write. Every step is persisted so you can audit exactly what happened.
 
+## Screenshots
+
+The console with the seeded demo store: catalog, revenue, content health and the agent prompt.
+
+![Ares console overview](docs/images/overview.png)
+
+A real run with a local model (Qwen 27B via LM Studio) for "Find our three weakest product descriptions and rewrite the worst one". Every step is stored; the write stops at the approval gate.
+
+<p align="center"><img src="docs/images/agent-run.png" alt="Agent run trace waiting for approval" width="480" /></p>
+
+The proposed change waits in the approval queue, with the old text struck through, until a human approves or rejects it.
+
+![Approval queue with the proposed description](docs/images/approval.png)
+
 ## What it does
 
 - **Agent engine** (`backend/app/agent/engine.py`): a bounded loop of plan, call tool, observe result. Three independent limits (iterations, tool calls, wall clock) stop runaway runs; when a limit is hit the agent summarises what it already knows instead of truncating.
@@ -18,7 +32,7 @@ An AI e-commerce operations console. You give it a task in plain language ("impr
 
 - **Evaluated:** 30 agent tasks with an oracle that must score 30/30 and a lazy baseline that scores 0/30. Run them
   against your own model: see [docs/EVALS.md](docs/EVALS.md).
-- **Checked in CI:** ruff, mypy, the backend tests with a coverage floor, the oracle eval, the frontend lint,
+- **Checked in CI:** ruff, mypy, the backend tests (95% line coverage, CI floor 93%), the oracle eval, the frontend lint,
   typecheck and build, and Playwright smoke tests.
 - **Documented:** [architecture](docs/ARCHITECTURE.md), [security model](docs/SECURITY.md) and
   [design decisions and trade-offs](docs/DESIGN.md).
@@ -58,7 +72,7 @@ Open http://localhost:3000. On Windows, `scripts/start.ps1` does both halves and
 ## Tests
 
 ```bash
-cd backend && .venv/Scripts/python -m pytest     # 213 tests (211 passed, 2 skipped), scripted LLM provider, no Ollama or network needed
+cd backend && .venv/Scripts/python -m pytest     # 429 tests (426 passed, 2 skipped, 1 known bug marked xfail), scripted LLM provider, no Ollama or network needed
 cd backend && .venv/Scripts/python -m app.evals --provider oracle   # agent eval harness, no model needed
 npm run lint && npx tsc --noEmit && npm run build
 npm test                                         # Playwright smoke, needs a running seeded app
