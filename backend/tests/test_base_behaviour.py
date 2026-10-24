@@ -24,7 +24,6 @@ from app.llm.base import (
     parse_arguments,
 )
 
-
 # --- error hierarchy ------------------------------------------------------
 
 

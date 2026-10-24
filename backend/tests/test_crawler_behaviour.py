@@ -18,7 +18,6 @@ import httpx
 
 from app.intelligence.crawler import CrawlPolicy, ResponsibleCrawler, _is_public_http_url
 
-
 PRODUCT_HTML = (
     '<html><head><title>Roller</title>'
     '<script type="application/ld+json">'

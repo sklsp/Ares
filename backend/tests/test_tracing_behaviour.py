@@ -17,7 +17,6 @@ import pytest
 from app.observability import tracing
 from app.observability.tracing import traced
 
-
 # --------------------------------------------------------------------------- #
 # fakes and fixtures
 # --------------------------------------------------------------------------- #

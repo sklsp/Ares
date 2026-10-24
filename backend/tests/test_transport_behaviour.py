@@ -20,7 +20,6 @@ import pytest
 
 from app.jobs import transport
 
-
 # --------------------------------------------------------------------------- #
 # fake redis client
 # --------------------------------------------------------------------------- #
@@ -419,7 +418,6 @@ def test_redis_reclaim_stale_moves_only_old_entries_back():
 
 def test_redis_reclaim_stale_skips_malformed_and_counts_missing_timestamp_as_stale():
     backend, client = make_redis_backend()
-    now = time.time()
     key = f"{transport.PROCESSING_KEY}:w3"
     client.lpush(key, "not-json")
     # Missing enqueued_at defaults to 0, so the entry is always stale.

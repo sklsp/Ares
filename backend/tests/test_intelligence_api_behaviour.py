@@ -130,7 +130,7 @@ def test_list_stores_reports_grouped_product_counts_and_ordering(client, db, man
     now = utcnow()
     busy = _store(db, domain="busy.example", name="Busy Shop", niche="running",
                   organization_id=org.id, last_crawled_at=now)
-    quiet = _store(db, domain="quiet.example", name="Quiet Shop", niche="yoga",
+    _store(db, domain="quiet.example", name="Quiet Shop", niche="yoga",
                    organization_id=org.id, last_crawled_at=now - timedelta(hours=1))
     db.flush()
     for i in range(3):
@@ -161,10 +161,10 @@ def test_list_external_products_orders_by_last_seen(client, db):
     store = _store(db, domain="catalog.example", organization_id=None)
     db.flush()
     now = utcnow()
-    older = _product(db, store=store, source_url="https://catalog.example/old",
+    _product(db, store=store, source_url="https://catalog.example/old",
                      name="Old Item", normalized_name="old item",
                      last_seen_at=now - timedelta(hours=1))
-    newer = _product(db, store=store, source_url="https://catalog.example/new",
+    _product(db, store=store, source_url="https://catalog.example/new",
                      name="New Item", normalized_name="new item",
                      last_seen_at=now)
     db.commit()
