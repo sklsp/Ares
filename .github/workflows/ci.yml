@@ -25,7 +25,7 @@ jobs:
       - name: Typecheck
         run: python -m mypy
       - name: Run tests
-        run: python -m pytest --cov=app --cov-report=term --cov-fail-under=82
+        run: python -m pytest --cov=app --cov-report=term --cov-fail-under=93
         env:
           TMPDIR: ${{ runner.temp }}
       - name: Agent eval (oracle must be perfect)
