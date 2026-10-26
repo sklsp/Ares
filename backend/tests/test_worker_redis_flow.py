@@ -108,3 +108,49 @@ def test_successful_job_leaves_nothing_behind(monkeypatch):
     for key in client.lists:
         if key.startswith(f"{transport.PROCESSING_KEY}:"):
             assert not client.lists[key]
+
+
+def test_reclaim_never_runs_a_dead_lettered_job_again(monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr(transport, "time", clock)
+
+    saved_handlers = dict(transport._handlers)
+    transport._handlers.clear()
+
+    def boom(payload):
+        raise RuntimeError("boom")
+
+    transport.register_handler("research", boom)
+    try:
+        client = FakeRedis()
+        backend = transport.RedisQueueBackend(client)
+        worker = Worker()
+
+        # Item 14's flow: the failing job is retried, then dead-lettered.
+        backend.enqueue("research", {"url": "https://example.com"}, job_id="job-3")
+        while True:
+            clock.advance(10_000)
+            if not worker._work_once(backend):
+                break
+
+        # Nothing is parked in a processing list, so there is nothing to
+        # reclaim and the dead-lettered job must not come back.
+        assert backend.reclaim_stale(0) == 0
+        assert not client.lists.get(transport.QUEUE_KEY, [])
+
+        # The stale case still works: claim a fresh job with a worker that
+        # then dies (never completes it), let the fake time run far ahead,
+        # and reclaim must put the job back in the queue exactly once.
+        backend.enqueue("research", {"url": "https://example.com"}, job_id="job-4")
+        entry = backend.claim(worker.worker_id, timeout_seconds=0)
+        assert entry is not None
+
+        clock.advance(120)
+        assert backend.reclaim_stale(60) == 1
+
+        queue = client.lists.get(transport.QUEUE_KEY, [])
+        assert len(queue) == 1
+        assert json.loads(queue[0])["id"] == "job-4"
+    finally:
+        transport._handlers.clear()
+        transport._handlers.update(saved_handlers)
