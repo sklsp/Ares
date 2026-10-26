@@ -44,7 +44,7 @@ def get_handler(job_type: str) -> Handler | None:
 class QueueBackend(ABC):
     @abstractmethod
     def enqueue(self, job_type: str, payload: dict[str, Any], *, job_id: str | None = None,
-                delay_seconds: float = 0) -> str:
+                delay_seconds: float = 0, retry_count: int = 0) -> str:
         """Queue one job; returns its transport id."""
 
     @abstractmethod
@@ -88,10 +88,13 @@ class RedisQueueBackend(QueueBackend):
         self.client = redis_client
 
     def enqueue(self, job_type: str, payload: dict[str, Any], *, job_id: str | None = None,
-                delay_seconds: float = 0) -> str:
+                delay_seconds: float = 0, retry_count: int = 0) -> str:
         entry_id = job_id or uuid.uuid4().hex
-        entry = json.dumps({"id": entry_id, "type": job_type, "payload": payload,
-                            "enqueued_at": time.time()})
+        data: dict[str, Any] = {"id": entry_id, "type": job_type, "payload": payload,
+                                "enqueued_at": time.time()}
+        if retry_count > 0:
+            data["retry_count"] = retry_count
+        entry = json.dumps(data)
         if delay_seconds > 0:
             self.client.zadd("research:delayed", {entry: time.time() + delay_seconds})
         else:
@@ -144,7 +147,8 @@ class RedisQueueBackend(QueueBackend):
     def requeue(self, entry: dict[str, Any], *, delay_seconds: float = 0) -> None:
         self._remove_from_processing(entry)
         self.enqueue(entry.get("type", "research"), entry.get("payload", {}),
-                     job_id=entry.get("id"), delay_seconds=delay_seconds)
+                     job_id=entry.get("id"), delay_seconds=delay_seconds,
+                     retry_count=int(entry.get("retry_count", 0)))
 
     def dead_letter(self, entry: dict[str, Any], error: str) -> None:
         self._remove_from_processing(entry)
@@ -209,9 +213,11 @@ class InlineQueueBackend(QueueBackend):
         self.executed: list[dict[str, Any]] = []
 
     def enqueue(self, job_type: str, payload: dict[str, Any], *, job_id: str | None = None,
-                delay_seconds: float = 0) -> str:
+                delay_seconds: float = 0, retry_count: int = 0) -> str:
         entry: dict[str, Any] = {"id": job_id or uuid.uuid4().hex, "type": job_type,
                                  "payload": payload, "worker_id": "inline"}
+        if retry_count > 0:
+            entry["retry_count"] = retry_count
         handler = get_handler(job_type)
         if handler is not None:
             handler(payload)

@@ -189,6 +189,15 @@ def test_redis_enqueue_without_job_id_generates_uuid_hex():
     assert entry["id"] == job_id
 
 
+def test_redis_enqueue_plain_json_has_no_retry_count_key():
+    backend, client = make_redis_backend()
+
+    backend.enqueue("research", {}, job_id="job-plain")
+
+    entry = json.loads(client.lists[transport.QUEUE_KEY][0])
+    assert list(entry) == ["id", "type", "payload", "enqueued_at"]
+
+
 def test_redis_enqueue_delayed_goes_to_sorted_set():
     backend, client = make_redis_backend()
 
@@ -432,11 +441,6 @@ def test_redis_requeue_with_worker_tagged_entry_removes_stored_raw():
     assert [json.loads(r)["id"] for r in client.lists[f"{transport.PROCESSING_KEY}:w1"]] == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="bug: requeue() enqueues only id, type and payload, so retry_count is lost "
-    "and a failing job never dead-letters",
-)
 def test_redis_requeue_keeps_retry_count():
     backend, client = make_redis_backend()
     entry = _claimed_entry(backend, client)
