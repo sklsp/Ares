@@ -72,7 +72,7 @@ Open http://localhost:3000. On Windows, `scripts/start.ps1` does both halves and
 ## Tests
 
 ```bash
-cd backend && .venv/Scripts/python -m pytest     # 429 tests (426 passed, 2 skipped, 1 known bug marked xfail), scripted LLM provider, no Ollama or network needed
+cd backend && .venv/Scripts/python -m pytest     # 440 tests (438 passed, 2 skipped), scripted LLM provider, no Ollama or network needed
 cd backend && .venv/Scripts/python -m app.evals --provider oracle   # agent eval harness, no model needed
 npm run lint && npx tsc --noEmit && npm run build
 npm test                                         # Playwright smoke, needs a running seeded app

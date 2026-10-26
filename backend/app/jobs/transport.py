@@ -44,7 +44,7 @@ def get_handler(job_type: str) -> Handler | None:
 class QueueBackend(ABC):
     @abstractmethod
     def enqueue(self, job_type: str, payload: dict[str, Any], *, job_id: str | None = None,
-                delay_seconds: float = 0) -> str:
+                delay_seconds: float = 0, retry_count: int = 0) -> str:
         """Queue one job; returns its transport id."""
 
     @abstractmethod
@@ -88,10 +88,13 @@ class RedisQueueBackend(QueueBackend):
         self.client = redis_client
 
     def enqueue(self, job_type: str, payload: dict[str, Any], *, job_id: str | None = None,
-                delay_seconds: float = 0) -> str:
+                delay_seconds: float = 0, retry_count: int = 0) -> str:
         entry_id = job_id or uuid.uuid4().hex
-        entry = json.dumps({"id": entry_id, "type": job_type, "payload": payload,
-                            "enqueued_at": time.time()})
+        data: dict[str, Any] = {"id": entry_id, "type": job_type, "payload": payload,
+                                "enqueued_at": time.time()}
+        if retry_count > 0:
+            data["retry_count"] = retry_count
+        entry = json.dumps(data)
         if delay_seconds > 0:
             self.client.zadd("research:delayed", {entry: time.time() + delay_seconds})
         else:
@@ -111,11 +114,15 @@ class RedisQueueBackend(QueueBackend):
         if result is None:
             return None
         try:
-            return json.loads(result)
+            entry = json.loads(result)
         except (ValueError, TypeError):
             logger.warning("Discarding malformed queue entry")
             self.client.lrem(processing_key, 1, result)
             return None
+        # Keep the exact value Redis stored so complete()/requeue()/dead_letter()
+        # can remove it byte-for-byte instead of re-serializing a mutated copy.
+        entry["_raw"] = result
+        return entry
 
     def _promote_delayed(self) -> None:
         due = self.client.zrangebyscore("research:delayed", "-inf", time.time())
@@ -126,25 +133,40 @@ class RedisQueueBackend(QueueBackend):
             if removed:
                 self.client.lpush(QUEUE_KEY, entry)
 
+    @staticmethod
+    def _processing_value(entry: dict[str, Any]) -> Any:
+        """The exact value stored in the processing list for ``entry``."""
+        if "_raw" in entry:
+            return entry["_raw"]
+        return json.dumps({k: v for k, v in entry.items() if k not in ("worker_id", "_raw")})
+
     def complete(self, entry: dict[str, Any]) -> None:
         self.client.lrem(f"{PROCESSING_KEY}:{entry.get('worker_id', '')}", 1,
-                         json.dumps(entry))
+                         self._processing_value(entry))
 
     def requeue(self, entry: dict[str, Any], *, delay_seconds: float = 0) -> None:
         self._remove_from_processing(entry)
         self.enqueue(entry.get("type", "research"), entry.get("payload", {}),
-                     job_id=entry.get("id"), delay_seconds=delay_seconds)
+                     job_id=entry.get("id"), delay_seconds=delay_seconds,
+                     retry_count=int(entry.get("retry_count", 0)))
 
     def dead_letter(self, entry: dict[str, Any], error: str) -> None:
         self._remove_from_processing(entry)
-        failed = dict(entry)
+        failed = {k: v for k, v in entry.items() if k != "_raw"}
         failed["error"] = error[:2000]
         failed["failed_at"] = time.time()
         self.client.lpush(DEAD_LETTER_KEY, json.dumps(failed))
 
     def _remove_from_processing(self, entry: dict[str, Any]) -> None:
-        self.client.lrem(f"{PROCESSING_KEY}:{entry.get('worker_id', '')}", 1,
-                         json.dumps(entry))
+        value = self._processing_value(entry)
+        if "worker_id" in entry:
+            self.client.lrem(f"{PROCESSING_KEY}:{entry['worker_id']}", 1, value)
+            return
+        # Untagged entry (never handed to a worker): remove the stored value
+        # from whichever processing list still holds it.
+        for key in self.client.keys(f"{PROCESSING_KEY}:*"):
+            k = key.decode() if isinstance(key, bytes) else key
+            self.client.lrem(k, 1, value)
 
     def reclaim_stale(self, older_than_seconds: float) -> int:
         """Return entries parked by workers that died mid-job."""
@@ -191,9 +213,11 @@ class InlineQueueBackend(QueueBackend):
         self.executed: list[dict[str, Any]] = []
 
     def enqueue(self, job_type: str, payload: dict[str, Any], *, job_id: str | None = None,
-                delay_seconds: float = 0) -> str:
+                delay_seconds: float = 0, retry_count: int = 0) -> str:
         entry: dict[str, Any] = {"id": job_id or uuid.uuid4().hex, "type": job_type,
                                  "payload": payload, "worker_id": "inline"}
+        if retry_count > 0:
+            entry["retry_count"] = retry_count
         handler = get_handler(job_type)
         if handler is not None:
             handler(payload)

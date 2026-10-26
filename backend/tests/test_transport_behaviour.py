@@ -189,6 +189,15 @@ def test_redis_enqueue_without_job_id_generates_uuid_hex():
     assert entry["id"] == job_id
 
 
+def test_redis_enqueue_plain_json_has_no_retry_count_key():
+    backend, client = make_redis_backend()
+
+    backend.enqueue("research", {}, job_id="job-plain")
+
+    entry = json.loads(client.lists[transport.QUEUE_KEY][0])
+    assert list(entry) == ["id", "type", "payload", "enqueued_at"]
+
+
 def test_redis_enqueue_delayed_goes_to_sorted_set():
     backend, client = make_redis_backend()
 
@@ -217,6 +226,19 @@ def test_redis_claim_nonblocking_moves_entry_to_processing():
     assert len(remaining) == 1 and json.loads(remaining[0])["id"] == "b"
     processing_key = f"{transport.PROCESSING_KEY}:w1"
     assert [json.loads(r)["id"] for r in client.lists[processing_key]] == ["a"]
+
+
+def test_redis_claim_returns_raw_value_as_stored():
+    backend, client = make_redis_backend()
+    backend.enqueue("research", {"n": 1}, job_id="a")
+
+    entry = backend.claim("w1", timeout_seconds=0)
+
+    # _raw is the exact value Redis returned (what lpush stored), so a later
+    # lrem of it matches byte-for-byte.
+    processing_key = f"{transport.PROCESSING_KEY}:w1"
+    (stored,) = client.lists[processing_key]
+    assert entry["_raw"] == stored
 
 
 def test_redis_claim_blocking_uses_brpoplpush_with_int_timeout():
@@ -284,6 +306,19 @@ def _claimed_entry(backend, client, worker_id="w1"):
     return backend.claim(worker_id, timeout_seconds=0)
 
 
+def test_processing_value_prefers_stored_raw():
+    entry = {"id": "job-1", "_raw": '{"id": "job-1"}'}
+
+    assert transport.RedisQueueBackend._processing_value(entry) == '{"id": "job-1"}'
+
+
+def test_processing_value_without_raw_drops_worker_id():
+    entry = {"id": "job-1", "type": "research", "worker_id": "w1"}
+
+    assert (transport.RedisQueueBackend._processing_value(entry)
+            == '{"id": "job-1", "type": "research"}')
+
+
 def test_redis_complete_untagged_entry_targets_bare_processing_key():
     backend, client = make_redis_backend()
     entry = _claimed_entry(backend, client)
@@ -305,12 +340,6 @@ def test_redis_complete_without_worker_id_uses_empty_suffix_key():
     assert f"{transport.PROCESSING_KEY}:" not in client.lists
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="bug: worker.py tags entries with worker_id before complete(), but "
-    "complete() lrem's json.dumps(tagged entry), which never matches the stored "
-    "raw JSON (no worker_id key); completed jobs stay in processing until reclaim",
-)
 def test_redis_complete_with_worker_tagged_entry_removes_stored_raw():
     backend, client = make_redis_backend()
     entry = _claimed_entry(backend, client)
@@ -321,7 +350,7 @@ def test_redis_complete_with_worker_tagged_entry_removes_stored_raw():
     assert [json.loads(r)["id"] for r in client.lists[f"{transport.PROCESSING_KEY}:w1"]] == []
 
 
-def test_redis_requeue_immediate_enqueues_copy_but_leaves_original_parked():
+def test_redis_requeue_immediate_enqueues_copy_and_removes_original():
     backend, client = make_redis_backend()
     entry = _claimed_entry(backend, client)
 
@@ -332,9 +361,9 @@ def test_redis_requeue_immediate_enqueues_copy_but_leaves_original_parked():
     assert requeued["id"] == "job-1"
     assert requeued["type"] == "research"
     assert requeued["payload"] == {"n": 1}
-    # The removal is a no-op (see xfail above): the original stays parked.
+    # The original is removed from processing.
     processing_key = f"{transport.PROCESSING_KEY}:w1"
-    assert [json.loads(r)["id"] for r in client.lists[processing_key]] == ["job-1"]
+    assert client.lists[processing_key] == []
 
 
 def test_redis_requeue_delayed_goes_to_sorted_set():
@@ -373,9 +402,9 @@ def test_redis_dead_letter_parks_truncated_error():
     assert len(parked["error"]) == 2000
     assert parked["error"].startswith("boom-")
     assert abs(parked["failed_at"] - time.time()) < 5
-    # Original stays parked in the worker's list (removal is a no-op).
+    # The original is removed from processing.
     processing_key = f"{transport.PROCESSING_KEY}:w1"
-    assert [json.loads(r)["id"] for r in client.lists[processing_key]] == ["job-1"]
+    assert client.lists[processing_key] == []
 
 
 def test_redis_dead_letter_short_error_kept_verbatim():
@@ -386,6 +415,42 @@ def test_redis_dead_letter_short_error_kept_verbatim():
 
     parked = json.loads(client.lists[transport.DEAD_LETTER_KEY][0])
     assert parked["error"] == "short failure"
+
+
+def test_redis_dead_letter_with_worker_tagged_entry_removes_stored_raw():
+    backend, client = make_redis_backend()
+    entry = _claimed_entry(backend, client)
+    entry["worker_id"] = "w1"  # exactly what app/worker.py does after claim
+
+    backend.dead_letter(entry, "boom")
+
+    assert [json.loads(r)["id"] for r in client.lists[f"{transport.PROCESSING_KEY}:w1"]] == []
+    dead = client.lists[transport.DEAD_LETTER_KEY]
+    assert len(dead) == 1 and json.loads(dead[0])["id"] == "job-1"
+    parked = json.loads(dead[0])
+    assert "_raw" not in parked and parked["error"] == "boom"
+
+
+def test_redis_requeue_with_worker_tagged_entry_removes_stored_raw():
+    backend, client = make_redis_backend()
+    entry = _claimed_entry(backend, client)
+    entry["worker_id"] = "w1"  # exactly what app/worker.py does after claim
+
+    backend.requeue(entry)
+
+    assert [json.loads(r)["id"] for r in client.lists[f"{transport.PROCESSING_KEY}:w1"]] == []
+
+
+def test_redis_requeue_keeps_retry_count():
+    backend, client = make_redis_backend()
+    entry = _claimed_entry(backend, client)
+    entry["worker_id"] = "w1"  # exactly what app/worker.py does after claim
+    entry["retry_count"] = 2
+
+    backend.requeue(entry)
+
+    (raw,) = client.lists[transport.QUEUE_KEY]
+    assert json.loads(raw)["retry_count"] == 2
 
 
 # --------------------------------------------------------------------------- #
