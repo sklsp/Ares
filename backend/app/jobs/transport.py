@@ -148,7 +148,7 @@ class RedisQueueBackend(QueueBackend):
 
     def dead_letter(self, entry: dict[str, Any], error: str) -> None:
         self._remove_from_processing(entry)
-        failed = dict(entry)
+        failed = {k: v for k, v in entry.items() if k != "_raw"}
         failed["error"] = error[:2000]
         failed["failed_at"] = time.time()
         self.client.lpush(DEAD_LETTER_KEY, json.dumps(failed))

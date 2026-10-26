@@ -418,6 +418,8 @@ def test_redis_dead_letter_with_worker_tagged_entry_removes_stored_raw():
     assert [json.loads(r)["id"] for r in client.lists[f"{transport.PROCESSING_KEY}:w1"]] == []
     dead = client.lists[transport.DEAD_LETTER_KEY]
     assert len(dead) == 1 and json.loads(dead[0])["id"] == "job-1"
+    parked = json.loads(dead[0])
+    assert "_raw" not in parked and parked["error"] == "boom"
 
 
 def test_redis_requeue_with_worker_tagged_entry_removes_stored_raw():
