@@ -219,6 +219,19 @@ def test_redis_claim_nonblocking_moves_entry_to_processing():
     assert [json.loads(r)["id"] for r in client.lists[processing_key]] == ["a"]
 
 
+def test_redis_claim_returns_raw_value_as_stored():
+    backend, client = make_redis_backend()
+    backend.enqueue("research", {"n": 1}, job_id="a")
+
+    entry = backend.claim("w1", timeout_seconds=0)
+
+    # _raw is the exact value Redis returned (what lpush stored), so a later
+    # lrem of it matches byte-for-byte.
+    processing_key = f"{transport.PROCESSING_KEY}:w1"
+    (stored,) = client.lists[processing_key]
+    assert entry["_raw"] == stored
+
+
 def test_redis_claim_blocking_uses_brpoplpush_with_int_timeout():
     backend, client = make_redis_backend()
     backend.enqueue("research", {}, job_id="a")

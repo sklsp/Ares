@@ -111,11 +111,15 @@ class RedisQueueBackend(QueueBackend):
         if result is None:
             return None
         try:
-            return json.loads(result)
+            entry = json.loads(result)
         except (ValueError, TypeError):
             logger.warning("Discarding malformed queue entry")
             self.client.lrem(processing_key, 1, result)
             return None
+        # Keep the exact value Redis stored so complete()/requeue()/dead_letter()
+        # can remove it byte-for-byte instead of re-serializing a mutated copy.
+        entry["_raw"] = result
+        return entry
 
     def _promote_delayed(self) -> None:
         due = self.client.zrangebyscore("research:delayed", "-inf", time.time())
