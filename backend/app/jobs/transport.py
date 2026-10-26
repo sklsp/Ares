@@ -130,9 +130,16 @@ class RedisQueueBackend(QueueBackend):
             if removed:
                 self.client.lpush(QUEUE_KEY, entry)
 
+    @staticmethod
+    def _processing_value(entry: dict[str, Any]) -> Any:
+        """The exact value stored in the processing list for ``entry``."""
+        if "_raw" in entry:
+            return entry["_raw"]
+        return json.dumps({k: v for k, v in entry.items() if k not in ("worker_id", "_raw")})
+
     def complete(self, entry: dict[str, Any]) -> None:
         self.client.lrem(f"{PROCESSING_KEY}:{entry.get('worker_id', '')}", 1,
-                         json.dumps(entry))
+                         self._processing_value(entry))
 
     def requeue(self, entry: dict[str, Any], *, delay_seconds: float = 0) -> None:
         self._remove_from_processing(entry)
@@ -147,8 +154,15 @@ class RedisQueueBackend(QueueBackend):
         self.client.lpush(DEAD_LETTER_KEY, json.dumps(failed))
 
     def _remove_from_processing(self, entry: dict[str, Any]) -> None:
-        self.client.lrem(f"{PROCESSING_KEY}:{entry.get('worker_id', '')}", 1,
-                         json.dumps(entry))
+        value = self._processing_value(entry)
+        if "worker_id" in entry:
+            self.client.lrem(f"{PROCESSING_KEY}:{entry['worker_id']}", 1, value)
+            return
+        # Untagged entry (never handed to a worker): remove the stored value
+        # from whichever processing list still holds it.
+        for key in self.client.keys(f"{PROCESSING_KEY}:*"):
+            k = key.decode() if isinstance(key, bytes) else key
+            self.client.lrem(k, 1, value)
 
     def reclaim_stale(self, older_than_seconds: float) -> int:
         """Return entries parked by workers that died mid-job."""
