@@ -154,3 +154,37 @@ def test_reclaim_never_runs_a_dead_lettered_job_again(monkeypatch):
     finally:
         transport._handlers.clear()
         transport._handlers.update(saved_handlers)
+
+
+def test_inline_backend_runs_jobs_on_enqueue():
+    saved_handlers = dict(transport._handlers)
+    transport._handlers.clear()
+
+    seen = []
+
+    def ok(payload):
+        seen.append(payload)
+
+    transport.register_handler("research", ok)
+    try:
+        backend = transport.InlineQueueBackend()
+
+        job_id = backend.enqueue("research", {"url": "https://example.com"},
+                                 job_id="job-5", retry_count=2)
+
+        # The inline backend runs the handler immediately on enqueue.
+        assert seen == [{"url": "https://example.com"}]
+        assert len(backend.executed) == 1
+        entry = backend.executed[0]
+        assert entry["id"] == job_id == "job-5"
+        assert entry["type"] == "research"
+        assert entry["payload"] == {"url": "https://example.com"}
+        assert entry["worker_id"] == "inline"
+        assert entry["retry_count"] == 2
+
+        # Nothing is queued or pending: the inline backend has no queue.
+        assert backend.depth() == {"queued": 0, "delayed": 0, "dead_letter": 0,
+                                   "processing": 0}
+    finally:
+        transport._handlers.clear()
+        transport._handlers.update(saved_handlers)
