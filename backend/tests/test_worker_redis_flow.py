@@ -72,3 +72,39 @@ def test_failing_job_reaches_dead_letter_after_max_attempts(monkeypatch):
     for key in client.lists:
         if key.startswith(f"{transport.PROCESSING_KEY}:"):
             assert not client.lists[key]
+
+
+def test_successful_job_leaves_nothing_behind(monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr(transport, "time", clock)
+
+    saved_handlers = dict(transport._handlers)
+    transport._handlers.clear()
+
+    seen = []
+
+    def ok(payload):
+        seen.append(payload)
+
+    transport.register_handler("research", ok)
+    try:
+        client = FakeRedis()
+        backend = transport.RedisQueueBackend(client)
+        worker = Worker()
+
+        backend.enqueue("research", {"url": "https://example.com"}, job_id="job-2")
+
+        clock.advance(10_000)
+        assert worker._work_once(backend) is True
+    finally:
+        transport._handlers.clear()
+        transport._handlers.update(saved_handlers)
+
+    assert seen == [{"url": "https://example.com"}]
+    assert worker.processed == 1
+
+    assert not client.lists.get(transport.QUEUE_KEY, [])
+    assert not client.lists.get(transport.DEAD_LETTER_KEY, [])
+    for key in client.lists:
+        if key.startswith(f"{transport.PROCESSING_KEY}:"):
+            assert not client.lists[key]
